@@ -40,7 +40,7 @@ h1.title {{ direction: rtl; font-size: 1.9rem; font-weight: 700; margin: 0 0 .2r
 .bar {{ display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin: .6rem 0 .5rem; background: {OUT_C}; }}
 .bar .in {{ background: {IN_C}; }}
 .stats {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: .4rem; }}
-.stat .k {{ color: {MUTED}; font-size: .75rem; }}
+.stat .k {{ color: {MUTED}; font-size: .75rem; text-align: right; }}
 .stat .v {{ font-size: .95rem; font-weight: 500; direction: ltr; text-align: right; }}
 @media (max-width: 640px) {{ .stats {{ grid-template-columns: repeat(2, 1fr); }} }}
 </style>
