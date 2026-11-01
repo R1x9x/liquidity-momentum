@@ -34,13 +34,19 @@ TV_COPY = ("<div class='tradingview-widget-copyright' style='font:11px Arial;col
            "Charts and quotes by TradingView</a></div>")
 
 
-def tv_ticker_tape(symbols):
-    cfg = {"symbols": [{"proName": s, "title": s} for s in symbols], "showSymbolLogo": False,
-           "isTransparent": True, "displayMode": "adaptive", "colorTheme": "dark", "locale": "en"}
-    components.html(
-        "<div class='tradingview-widget-container'><div class='tradingview-widget-container__widget'></div>"
-        "<script type='text/javascript' src='https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js' async>"
-        + json.dumps(cfg) + "</script></div>", height=78)
+# المؤشرات الرسمية (SPX وNDX وVIX) ممنوعة في ودجت TradingView المجاني، فنعرض عقود CFD اللي تتبعها لحظياً
+INDICES = (("FOREXCOM:SPXUSD", "S&P 500"), ("FOREXCOM:NSXUSD", "NASDAQ 100"), ("CAPITALCOM:VIX", "VIX"))
+
+
+def tv_indices():
+    # كل مؤشر في عمود لحاله عشان الثلاثة يبانون حتى في الجوال (الأعمدة تنرص فوق بعض)
+    for col, (sym, title) in zip(st.columns(len(INDICES)), INDICES):
+        cfg = {"symbol": sym, "width": "100%", "isTransparent": True, "colorTheme": "dark", "locale": "en"}
+        with col:
+            components.html(
+                "<div class='tradingview-widget-container'><div class='tradingview-widget-container__widget'></div>"
+                "<script type='text/javascript' src='https://s3.tradingview.com/external-embedding/embed-widget-single-quote.js' async>"
+                + json.dumps(cfg) + "</script></div>", height=90)
 
 
 def tv_chart(symbol, height=520):
@@ -536,10 +542,10 @@ def scanner():
 MODES = ("الأسهم الكبيرة", "الأسهم الصغيرة (1 إلى 5 دولار)")
 mode = st.radio("القائمة", MODES, horizontal=True, label_visibility="collapsed") if LIVE else MODES[0]
 
-if tickers and mode == MODES[0]:
-    st.markdown("<div class='sub'>أسعار لحظية من TradingView</div>", unsafe_allow_html=True)
-    tv_ticker_tape(list(tickers))
-    st.markdown(TV_COPY, unsafe_allow_html=True)
+st.markdown("<div class='sub'>المؤشرات لحظية من TradingView (S&amp;P 500، ناسداك 100، ومؤشر الخوف VIX)</div>",
+            unsafe_allow_html=True)
+tv_indices()
+st.markdown(TV_COPY, unsafe_allow_html=True)
 
 if auto:
     st.fragment(run_every=REFRESH)(scanner)()
@@ -548,5 +554,5 @@ else:
 
 src = ("النقاط والسيولة والعقود لحظية من Alpaca." if LIVE else
        "النقاط والسيولة من Yahoo Finance وقد تتأخر دقيقة إلى دقيقتين.")
-st.markdown(f"<div class='sub'>الأسعار في الشريط والشارت لحظية من TradingView. {src} "
+st.markdown(f"<div class='sub'>المؤشرات والشارت لحظية من TradingView. {src} "
             "الأرقام للمتابعة فقط وليست توصية شراء أو بيع.</div>", unsafe_allow_html=True)
