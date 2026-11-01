@@ -17,3 +17,6 @@ state/
 
 # Local notes (server IP, accounts): keep out of the public repo
 CLAUDE.md
+
+# Local tool settings
+.claude/

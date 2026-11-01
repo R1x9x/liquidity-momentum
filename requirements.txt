@@ -3,3 +3,7 @@ yfinance
 pandas
 numpy
 plotly
+requests
+pillow
+arabic-reshaper
+python-bidi
