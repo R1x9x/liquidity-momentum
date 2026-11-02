@@ -124,7 +124,15 @@ h1.title {{ direction: rtl; text-align: right; font-size: 1.9rem; font-weight: 7
 .chk .d {{ color: {MUTED}; direction: ltr; unicode-bidi: isolate; }}
 @media (max-width: 640px) {{
   .stats, .checks {{ grid-template-columns: repeat(2, 1fr); }} }}
-/* تحديث صامت: لا تعتيم ولا مؤشر تشغيل أثناء التحديث كل دقيقة */
+.price.fu {{ animation: fu 1.2s ease-out; }} .price.fd {{ animation: fd 1.2s ease-out; }}
+@keyframes fu {{ 0% {{ color: {IN_C}; background: rgba(60,199,166,.25); }} 100% {{ background: transparent; }} }}
+@keyframes fd {{ 0% {{ color: {OUT_C}; background: rgba(238,107,94,.25); }} 100% {{ background: transparent; }} }}
+.price {{ border-radius: 5px; padding: 0 .2rem; }}
+.live {{ display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; background: {IN_C};
+         margin-left: .35rem; animation: pulse 2s infinite; vertical-align: middle; }}
+@keyframes pulse {{ 0% {{ box-shadow: 0 0 0 0 rgba(60,199,166,.6); }} 70% {{ box-shadow: 0 0 0 .5rem rgba(60,199,166,0); }}
+                   100% {{ box-shadow: 0 0 0 0 rgba(60,199,166,0); }} }}
+/* تحديث صامت: لا تعتيم ولا مؤشر تشغيل أثناء التحديث */
 [data-stale="true"], .stale-element {{ opacity: 1 !important; filter: none !important; transition: none !important; }}
 [data-testid="stStatusWidget"] {{ visibility: hidden !important; }}
 </style>
@@ -172,14 +180,35 @@ fetch = tuple(dict.fromkeys(tickers + (MARKET,)))
 REFRESH = 20 if LIVE else 60
 
 
-@st.cache_data(ttl=REFRESH - 2, show_spinner=False)
-def load_data(tks, source):
-    return rc.load_market(tks, source)
+TICK = 3 if LIVE else REFRESH  # ثواني بين كل تحديث للأسعار في الموقع الخاص
 
 
-@st.cache_data(ttl=REFRESH - 2, show_spinner=False)
+# التحليل الثقيل مشترك بين الزوار وما ينسخ كل مرة (cache_resource)، والأسعار الخفيفة تتحدث كل 3 ثواني
+@st.cache_resource(ttl=REFRESH - 5 if LIVE else REFRESH - 2, show_spinner=False)
+def load_big(tks, fetch, source, params):
+    data = rc.load_market(fetch, source)
+    results, mkt = rc.scan(data, tks, dict(params))
+    return results, mkt, data
+
+
+@st.cache_resource(ttl=REFRESH - 5 if LIVE else REFRESH - 2, show_spinner=False)
 def load_penny(params):
-    return rc.penny_scan(dict(params))
+    results, data = rc.penny_scan(dict(params))
+    mkt = rc.market_state(data["intr"].get(MARKET), data["daily"].get(MARKET)) if data else None
+    return results, mkt, data
+
+
+@st.cache_data(ttl=2, show_spinner=False)
+def live_quotes(syms):
+    try:
+        return rc.live_quotes(list(syms))
+    except Exception:
+        return {}
+
+
+def market_hours():
+    now = pd.Timestamp.now(tz="America/New_York")
+    return now.weekday() < 5 and 570 <= now.hour * 60 + now.minute < 960
 
 
 @st.cache_resource
@@ -327,7 +356,7 @@ def row_html(r):
   <div class='head'>
     <div class='h-r'>
       <span class='sym'>{r["sym"]}</span>
-      <span class='price'>${r["price"]:.2f}</span>
+      <span class='price{r.get("flash", "")}'>${r["price"]:.2f}</span>
       <span class='pct {cc(r["chg"])}'>{r["chg"]:+.2f}%</span>
     </div>
     <div class='h-c'>{opt_html(r.get("opt"), "call" if r["side"] == "up" else "put")}</div>
@@ -420,65 +449,66 @@ st.markdown("<div class='sub'>نقاط الصعود والهبوط لكل سهم
             unsafe_allow_html=True)
 
 
-def scanner():
-    penny = mode == MODES[1]
-    if not tickers and not penny:
-        st.info("أضف رموز الأسهم من الإعدادات للبدء.")
-        return
-
-    # مؤشر التحميل يظهر أول مرة بس، والتحديثات بعدها تصير بصمت
+def get_results(penny):
+    """النتائج من الكاش المشترك؛ أول مرة يطلع مؤشر تحميل، بعدها بصمت."""
     note = None
     if not st.session_state.get(f"loaded_{penny}"):
         note = st.empty()
         note.markdown("<div class='sub'>جاري تحميل البيانات…</div>", unsafe_allow_html=True)
     try:
-        if penny:
-            results, data = load_penny(tuple(sorted(p.items())))
-            mkt = rc.market_state(data["intr"].get(MARKET), data["daily"].get(MARKET)) if data else None
-        else:
-            data = load_data(fetch, SOURCE)
-            results, mkt = rc.scan(data, tickers, p)
+        out = load_penny(tuple(sorted(p.items()))) if penny else load_big(tickers, fetch, SOURCE, tuple(sorted(p.items())))
     except Exception:
-        if note:
-            note.empty()
-        st.warning("تعذر تحميل البيانات هالمرة، بيعيد المحاولة تلقائياً بعد شوي.")
-        return
+        out = None
     if note:
         note.empty()
-    st.session_state[f"loaded_{penny}"] = True
+    if out:
+        st.session_state[f"loaded_{penny}"] = True
+    return out
+
+
+def cards():
+    penny = mode == MODES[1]
+    out = get_results(penny)
+    if out is None:
+        st.warning("تعذر تحميل البيانات هالمرة، بيعيد المحاولة تلقائياً بعد شوي.")
+        return
+    results, mkt, _ = out
     if not results:
         st.warning("ما وصلت بيانات. تأكد من رموز الأسهم أو جرّب بعد دقيقة.")
         return
     mkt = mkt or {"chg": 0.0, "above_vwap": None}
-    frames, dailies = data["intr"], data["daily"]
-    tfs = {r["sym"]: {"15د": data["b15"].get(r["sym"]), "ساعة": data["b60"].get(r["sym"])} for r in results}
+    results = [dict(r) for r in results]  # نسخة للعرض، الكاش مشترك
 
-    last = max(r["last"] for r in results)
+    live = LIVE and market_hours()
+    if live:
+        q = live_quotes(tuple(r["sym"] for r in results))
+        prev = st.session_state.setdefault("prev_px", {})
+        for r in results:
+            if r["sym"] in q:
+                r["price"], r["chg"] = q[r["sym"]]
+            old = prev.get(r["sym"])
+            r["flash"] = "" if old is None or old == r["price"] else (" fu" if r["price"] > old else " fd")
+            prev[r["sym"]] = r["price"]
+
     n_up = sum(r["status"] == "up" for r in results)
     n_dn = sum(r["status"] == "dn" for r in results)
     n_acc = sum(r["status"] == "acc" for r in results)
     what = "سهم صغير (1 إلى 5 دولار)، صعود فقط" if penny else "سهم"
-    st.markdown(f"<div class='sub'>آخر تحديث: {last.strftime('%H:%M')} بتوقيت نيويورك. "
-                f"السوق (SPY) {mkt['chg']:+.2f}%. "
+    if live:
+        when = (f"<span class='live'></span>مباشر · الأسعار تتحدث كل {TICK} ثواني · "
+                f"{pd.Timestamp.now(tz='America/New_York').strftime('%H:%M:%S')} نيويورك. ")
+    else:
+        when = f"آخر تحديث: {max(r['last'] for r in results).strftime('%H:%M')} بتوقيت نيويورك. "
+    st.markdown(f"<div class='sub'>{when}السوق (SPY) {mkt['chg']:+.2f}%. "
                 f"<span class='up'>{n_up} صعود قوي</span>، <span class='down'>{n_dn} هبوط قوي</span>، "
                 f"<span style='color:{SIG_C}'>{n_acc} تجميع</span> من {len(results)} {what}</div>",
                 unsafe_allow_html=True)
-
-    c1, c2, c3 = st.columns([2, 1, 1])
-    sort_by = c1.selectbox("الترتيب حسب", ["قوة الإشارة", "صافي السيولة اليوم",
-                                           "نسبة السيولة الداخلة", "الزخم", "الحجم مقابل المعتاد"])
-    only_sig = c2.toggle("الإشارات والتجميع فقط", value=False)
-    only_top = c3.toggle(f"الأقوى ({min_score}+ نقاط)", value=False,
-                         help=f"يعرض الأسهم اللي حققت {min_score} نقاط أو أكثر، صعود أو هبوط، "
-                              "حتى لو ما تحقق فيها شرط السيولة أو متوسط 20 يوم")
-    key = {"قوة الإشارة": "score", "صافي السيولة اليوم": "net_day", "نسبة السيولة الداخلة": "in_pct",
-           "الزخم": "mom", "الحجم مقابل المعتاد": "rvol"}[sort_by]
 
     shown = [r for r in results if r["status"]] if only_sig else results
     if only_top:
         shown = [r for r in shown if r["score"] >= min_score]
     rank = {"up": 2, "dn": 2, "acc": 1, "": 0}
-    shown = sorted(shown, key=lambda r: (rank[r["status"]], r[key]), reverse=True)
+    shown = sorted(shown, key=lambda r: (rank[r["status"]], r[sort_key]), reverse=True)
     if not shown:
         st.info("ما فيه أسهم تطابق الفلتر الحين. خفّض عدد النقاط المطلوب من الإعدادات أو انتظر.")
     if show_opt and shown and not penny:
@@ -503,10 +533,18 @@ def scanner():
                 r["opt"] = r.get("opt") or job(r)
     st.markdown("".join(row_html(r) for r in shown), unsafe_allow_html=True)
 
+
+def details():
+    penny = mode == MODES[1]
+    out = get_results(penny)
+    if not out or not out[0]:
+        return
+    results, _, data = out
+    frames, dailies = data["intr"], data["daily"]
     st.markdown("<div class='rtl' style='margin-top:1.2rem'><b>تفاصيل سهم</b></div>",
                 unsafe_allow_html=True)
-    options = [r["sym"] for r in shown] or [r["sym"] for r in results]
-    pick_sym = st.selectbox("اختر السهم", options)
+    options = [r["sym"] for r in sorted(results, key=lambda r: -r["score"])]
+    pick_sym = st.selectbox("اختر السهم", options, key=f"pick_{penny}")
     sel = next((r for r in results if r["sym"] == pick_sym), None)
     if sel and pick_sym in frames:
         st.plotly_chart(detail_chart(frames[pick_sym], sel["sma"]), width="stretch")
@@ -527,7 +565,7 @@ def scanner():
             st.markdown("<div class='sub'>الخط الأزرق متوسط 20 يوم.</div>", unsafe_allow_html=True)
         else:
             name = "15د" if frame == "15 دقيقة" else "ساعة"
-            bars = tfs[pick_sym][name]
+            bars = data["b15" if name == "15د" else "b60"].get(pick_sym)
             if bars is None or len(bars) < 10:
                 st.info("ما وصلت بيانات هذا الفريم.")
             else:
@@ -538,7 +576,6 @@ def scanner():
                             unsafe_allow_html=True)
 
 
-
 MODES = ("الأسهم الكبيرة", "الأسهم الصغيرة (1 إلى 5 دولار)")
 mode = st.radio("القائمة", MODES, horizontal=True, label_visibility="collapsed") if LIVE else MODES[0]
 
@@ -547,10 +584,23 @@ st.markdown("<div class='sub'>المؤشرات لحظية من TradingView (S&am
 tv_indices()
 st.markdown(TV_COPY, unsafe_allow_html=True)
 
-if auto:
-    st.fragment(run_every=REFRESH)(scanner)()
-else:
-    st.fragment(scanner)()
+if not tickers and mode == MODES[0]:
+    st.info("أضف رموز الأسهم من الإعدادات للبدء.")
+    st.stop()
+
+c1, c2, c3 = st.columns([2, 1, 1])
+sort_by = c1.selectbox("الترتيب حسب", ["قوة الإشارة", "صافي السيولة اليوم",
+                                       "نسبة السيولة الداخلة", "الزخم", "الحجم مقابل المعتاد"])
+only_sig = c2.toggle("الإشارات والتجميع فقط", value=False)
+only_top = c3.toggle(f"الأقوى ({min_score}+ نقاط)", value=False,
+                     help=f"يعرض الأسهم اللي حققت {min_score} نقاط أو أكثر، صعود أو هبوط، "
+                          "حتى لو ما تحقق فيها شرط السيولة أو متوسط 20 يوم")
+sort_key = {"قوة الإشارة": "score", "صافي السيولة اليوم": "net_day", "نسبة السيولة الداخلة": "in_pct",
+            "الزخم": "mom", "الحجم مقابل المعتاد": "rvol"}[sort_by]
+
+# البطاقات تتحدث كل 3 ثواني (الأسعار) والتحليل كل 15 ثانية؛ الشارتات لحالها كل دقيقة عشان ما ترمش
+st.fragment(run_every=TICK if auto else None)(cards)()
+st.fragment(run_every=60 if auto else None)(details)()
 
 src = ("النقاط والسيولة والعقود لحظية من Alpaca." if LIVE else
        "النقاط والسيولة من Yahoo Finance وقد تتأخر دقيقة إلى دقيقتين.")

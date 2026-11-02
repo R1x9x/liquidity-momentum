@@ -456,6 +456,20 @@ def scan(data, tks, p=PARAMS, side=None, mkt=None):
     return out, mkt
 
 
+def live_quotes(syms):
+    """آخر سعر ونسبة التغير من إغلاق أمس لكل سهم (طلب واحد خفيف من Alpaca)."""
+    a = api()
+    out = {}
+    for i in range(0, len(syms), 100):
+        j = a.get(f"{a.DATA}/v2/stocks/snapshots", dict(symbols=",".join(syms[i:i + 100]), feed="sip"))
+        for sym, v in j.items():
+            p = ((v or {}).get("latestTrade") or {}).get("p")
+            prev = ((v or {}).get("prevDailyBar") or {}).get("c")
+            if p and prev:
+                out[sym] = (float(p), (float(p) / float(prev) - 1) * 100)
+    return out
+
+
 # ---------------- العقود (Alpaca / OPRA) ----------------
 def exp_label(exp, today):
     if exp == today:
