@@ -159,10 +159,10 @@ with st.sidebar:
              min_score=min_score, min_touch=min_touch)
     opt_rules, opt_dte, opt_min_oi = None, (5, 21), 100
     if PUBLIC:
-        show_opt, opt_budget = False, (100, 200)
+        show_opt, opt_budget = False, (100, 400)
     else:
         show_opt = st.toggle("عرض أفضل عقد أوبشن", value=True)
-        opt_budget = st.slider("سعر العقد ($)", 50, 500, (100, 200), 10)
+        opt_budget = st.slider("سعر العقد ($)", 50, 800, (100, 400), 10)
         if LIVE:
             opt_spread = st.slider("أقصى فرق بين العرض والطلب (%)", 1, 15, 5)
             opt_delta = st.slider("الدلتا", 0.10, 0.90, (0.30, 0.50), 0.05)

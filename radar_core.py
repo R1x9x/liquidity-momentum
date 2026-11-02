@@ -34,7 +34,7 @@ PARAMS = dict(flow_len=10, rvol_min=2.0, spike_min=3.0, in_min=65, out_max=35, n
               near_tl=0.4, atr_mult=0.5, rs_min=1.0, mom_min=0.5, min_score=7, min_touch=3)
 
 # شروط العقد: يومي أو أقرب أسبوعي، تكلفته (سعر الطلب × 100) ضمن الميزانية، فرق ضيق، ودلتا متوسطة
-OPT_RULES = dict(budget=(100, 200), max_spread=0.05, delta=(0.30, 0.50), min_liq=100,
+OPT_RULES = dict(budget=(100, 400), max_spread=0.05, delta=(0.30, 0.50), min_liq=100,
                  max_days=7, last_0dte=(15, 0))
 
 # الأسهم الصغيرة: السعر، وتقسيم عكسي صار قبل أسبوع إلى أسبوعين وما ارتد السهم بعده أكثر من 10%

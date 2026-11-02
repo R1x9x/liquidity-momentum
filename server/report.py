@@ -9,6 +9,7 @@ import datetime as dt
 from zoneinfo import ZoneInfo
 
 import radar_core as rc
+import cards
 
 NY = rc.NY
 RIYADH = ZoneInfo("Asia/Riyadh")
@@ -98,7 +99,7 @@ def _option_bars(a, syms, start, end):
     raw = a.paged(f"{a.DATA}/v1beta1/options/bars",
                   dict(symbols=",".join(syms), timeframe="1Min", start=start.isoformat(),
                        end=end.isoformat(), limit=10000), "bars")
-    return {s: [(dt.datetime.fromisoformat(b["t"].replace("Z", "+00:00")), b["h"], b["c"]) for b in rows]
+    return {s: [(dt.datetime.fromisoformat(b["t"].replace("Z", "+00:00")), b["h"], b["c"], b["l"]) for b in rows]
             for s, rows in raw.items()}
 
 
@@ -112,8 +113,21 @@ def _after(bars, ts, entry):
     rows = [b for b in bars if b[0] >= ts]
     if not rows:
         return entry, "ما تداول", entry
-    t, high, _ = max(rows, key=lambda b: b[1])
+    t, high = max(rows, key=lambda b: b[1])[:2]
     return high, clock(t), rows[-1][2]
+
+
+def outcome(bars, ts, entry, win_pct, stop_pct):
+    """وش صار أول بعد التنبيه: وصل الهدف (win) أو نزل للوقف (stop)، وإلا يُحسب على الإغلاق (close).
+    إذا الاثنين في نفس الدقيقة نعتبره وقف (الأحوط)."""
+    for b in bars:
+        if b[0] < ts:
+            continue
+        if b[3] <= entry * (1 - stop_pct / 100):
+            return "stop"
+        if b[1] >= entry * (1 + win_pct / 100):
+            return "win"
+    return "close"
 
 
 def build(recs, day):
@@ -132,10 +146,12 @@ def build(recs, day):
     crow, prow = [], []
     for r in big:
         ts = dt.datetime.fromisoformat(r["ts"])
-        high, high_time, close = _after(obars.get(r["option"], []), ts, r["entry"])
+        bars = obars.get(r["option"], [])
+        high, high_time, close = _after(bars, ts, r["entry"])
         crow.append(dict(sym=r["sym"], side=r["side"], kind=r["kind"], strike=r["strike"],
                          exp_label=r["exp_label"], time=clock(ts), entry=r["entry"],
-                         high=high, high_time=high_time, close=close))
+                         high=high, high_time=high_time, close=close,
+                         result=outcome(bars, ts, r["entry"], cards.WIN_PCT, cards.STOP_PCT)))
     for r in penny:
         ts = dt.datetime.fromisoformat(r["ts"])
         high, high_time, close = _after(sbars.get(r["sym"], []), ts, r["entry"])

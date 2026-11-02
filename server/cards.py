@@ -285,11 +285,20 @@ def pct(a, b):
     return (b / a - 1) * 100 if a else 0
 
 
-WIN_DOLLARS = 50  # a contract counts as a win once it traded $50 (per contract) above the alert price
+WIN_PCT = 30   # win: the contract traded 30% above the alert price before hitting the stop (sold at the target)
+STOP_PCT = 50  # stop: it fell 50% below the alert price before reaching the target (sold at the stop)
 
 
-def contract_won(r):
-    return round((r["high"] - r["entry"]) * 100, 2) >= WIN_DOLLARS
+def contract_result(r):
+    """win / stop / close. report.build works it out minute by minute; demos may pass it directly."""
+    return r.get("result") or ("win" if r["high"] >= r["entry"] * (1 + WIN_PCT / 100) else "close")
+
+
+def contract_pnl(r):
+    """Dollars per contract under the rule above; contracts that hit neither count at the close."""
+    cost = r["entry"] * 100
+    return {"win": cost * WIN_PCT / 100, "stop": -cost * STOP_PCT / 100}.get(contract_result(r),
+                                                                          (r["close"] - r["entry"]) * 100)
 
 
 ROW_H = 108
@@ -318,7 +327,7 @@ def col_x(i):
     return PAD + 24 + COL_W * (2 - i) + COL_W / 2
 
 
-def table(d, y, rows, name_label, draw_name):
+def table(d, y, rows, name_label, draw_name, tag=lambda r: None):
     """One compact row per alert so the whole report fits one phone-sized image."""
     heads = (name_label, "سعر التنبيه", "أعلى سعر", "الإغلاق")
     rtext(d, W - PAD - 28, y, heads[0], F["small"], MUTED)
@@ -340,6 +349,8 @@ def table(d, y, rows, name_label, draw_name):
             d.text((col_x(i), y + g["val"]), f"${val:.2f}", font=g["cell"], fill=TEXT, anchor="ma")
             p = pct(r["entry"], val)
             line = f"{p:+.0f}%" + (f"  {extra}" if extra else "")
+            if i == 2 and tag(r):
+                line, p = tag(r)
             d.text((col_x(i), y + g["sub2"]), ar(line), font=g["tiny"], fill=UP if p >= 0 else DN, anchor="ma")
         y += rh
     return top + rh * len(rows) + 8 + 24
@@ -357,7 +368,7 @@ def contract_report(rows, day, when):
     entry = ask at the alert; high/close come from the contract's trades after it."""
     img = Image.new("RGB", (W, 760 + 60 + table_height(len(rows)) + 200), BG)
     d = ImageDraw.Draw(img)
-    win = sum(contract_won(r) for r in rows)
+    win = sum(contract_result(r) == "win" for r in rows)
     cost = sum(r["entry"] * 100 for r in rows)
     y = report_header(img, d, "تقرير العقود", day, [
         total_tile(rows, cost, "عقد", "عقود"),
@@ -367,10 +378,9 @@ def contract_report(rows, day, when):
         d.rounded_rectangle((PAD, y, W - PAD, y + 140), radius=24, fill=CARD)
         ctext(d, W / 2, y + 48, "ما جاك ولا تنبيه عقد اليوم", F["h2"], MUTED)
         return finish(img, footer(d, y + 140, when))
-    # winners count +WIN_DOLLARS; every contract that missed the target goes to the loss side at its close
-    y = pnl_row(d, y - 24, WIN_DOLLARS * win,
-                sum((r["close"] - r["entry"]) * 100 for r in rows if not contract_won(r)),
-                cost) - 6
+    # winners count +WIN_PCT; every contract that missed the target goes to the loss side (stop or close)
+    y = pnl_row(d, y - 24, sum(contract_pnl(r) for r in rows if contract_result(r) == "win"),
+                sum(contract_pnl(r) for r in rows if contract_result(r) != "win"), cost) - 6
 
     def name(d, y, r, g):
         color = UP if r["side"] == "up" else DN
@@ -381,10 +391,11 @@ def contract_report(rows, day, when):
         rtext(d, W - PAD - 28, y + g["sub"], f"{r['time']} · {r['exp_label']}", g["tiny"], MUTED)
         return color
 
-    y = table(d, y, rows, "العقد", name)
+    tags = {"win": (f"هدف +{WIN_PCT}%", 1), "stop": ("ضرب الوقف", -1)}
+    y = table(d, y, rows, "العقد", name, tag=lambda r: tags.get(contract_result(r)))
     y = notes_block(d, y, [
-        f"رابحة = وصل العقد {WIN_DOLLARS}$ فوق سعره وقت التنبيه، وتنحسب ربح {WIN_DOLLARS}$ على أساس البيع عند الهدف.",
-        f"خاسرة = ما وصل {WIN_DOLLARS}$، وتنحسب على سعر الإغلاق. النسبة من إجمالي تكلفة العقود."])
+        f"رابحة = وصل العقد +{WIN_PCT}% قبل ما ينزل {STOP_PCT}%، وتنحسب ربح {WIN_PCT}% على أساس البيع عند الهدف.",
+        f"ضرب الوقف = نزل {STOP_PCT}% قبل الهدف، وتنحسب خسارة {STOP_PCT}%. غير كذا تنحسب على سعر الإغلاق."])
     return finish(img, footer(d, y, when))
 
 
@@ -458,11 +469,11 @@ if __name__ == "__main__":
 
     day = "الإثنين 11/02"
     crow = [dict(sym="TSLA", side="up", kind="call", strike=415, exp_label="ينتهي اليوم", time="5:12 م",
-                 entry=1.52, high=2.40, high_time="6:05 م", close=1.10),
+                 entry=1.52, high=2.40, high_time="6:05 م", close=0.40, result="win"),
             dict(sym="NVDA", side="down", kind="put", strike=198, exp_label="ينتهي الجمعة 11/06", time="7:40 م",
                  entry=1.85, high=2.35, high_time="8:15 م", close=2.10),
             dict(sym="META", side="up", kind="call", strike=640, exp_label="ينتهي الجمعة 11/06", time="9:02 م",
-                 entry=1.20, high=1.26, high_time="9:10 م", close=0.64),
+                 entry=1.20, high=1.26, high_time="9:10 م", close=0.30, result="stop"),
             dict(sym="AMD", side="up", kind="call", strike=262.5, exp_label="ينتهي اليوم", time="9:30 م",
                  entry=1.60, high=1.95, high_time="10:12 م", close=1.75)]
     crow += [dict(sym="AAPL", side="down", kind="put", strike=265, exp_label="ينتهي اليوم", time="10:05 م",
@@ -472,7 +483,7 @@ if __name__ == "__main__":
              dict(sym="GOOGL", side="up", kind="call", strike=285, exp_label="ينتهي اليوم", time="10:48 م",
                   entry=1.10, high=1.75, high_time="11:20 م", close=1.55),
              dict(sym="AVGO", side="down", kind="put", strike=345, exp_label="ينتهي الجمعة 11/06", time="11:15 م",
-                  entry=1.70, high=1.82, high_time="11:22 م", close=1.15),
+                  entry=1.70, high=1.82, high_time="11:22 م", close=0.55, result="stop"),
              dict(sym="NFLX", side="up", kind="call", strike=1120, exp_label="ينتهي الجمعة 11/06", time="11:40 م",
                   entry=1.95, high=2.60, high_time="11:58 م", close=2.45)]
     open(os.path.join(out, "report-contracts.png"), "wb").write(contract_report(crow, day, "11:05 م"))
