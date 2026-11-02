@@ -3,6 +3,7 @@
 يستخدمها الموقع (app.py) وخدمة التنبيهات (server/alerts.py) عشان الحساب يكون واحد في المكانين.
 """
 import os
+import math
 import time
 import datetime as dt
 from zoneinfo import ZoneInfo
@@ -463,6 +464,40 @@ def exp_label(exp, today):
     return f"ينتهي {days[exp.weekday()]} {exp.strftime('%m/%d')}"
 
 
+def _ncdf(x):
+    return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+
+
+def bs_greeks(kind, S, K, T, mid, r=0.04):
+    """Alpaca ما يعطي Greeks لعقود نفس اليوم، فنحسبها من سعر العقد (Black-Scholes)."""
+    if T <= 0 or mid <= 0 or S <= 0:
+        return None
+    call = kind == "call"
+
+    def price(v):
+        d1 = (math.log(S / K) + (r + v * v / 2) * T) / (v * math.sqrt(T))
+        d2 = d1 - v * math.sqrt(T)
+        if call:
+            return S * _ncdf(d1) - K * math.exp(-r * T) * _ncdf(d2)
+        return K * math.exp(-r * T) * _ncdf(-d2) - S * _ncdf(-d1)
+
+    lo, hi = 0.01, 5.0
+    if not price(lo) <= mid <= price(hi):
+        return None
+    for _ in range(60):
+        v = (lo + hi) / 2
+        lo, hi = (v, hi) if price(v) < mid else (lo, v)
+    v = (lo + hi) / 2
+    d1 = (math.log(S / K) + (r + v * v / 2) * T) / (v * math.sqrt(T))
+    d2 = d1 - v * math.sqrt(T)
+    pdf = math.exp(-d1 * d1 / 2) / math.sqrt(2 * math.pi)
+    delta = _ncdf(d1) if call else _ncdf(d1) - 1
+    gamma = pdf / (S * v * math.sqrt(T))
+    carry = r * K * math.exp(-r * T) * (_ncdf(d2) if call else -_ncdf(-d2))
+    theta = (-S * pdf * v / (2 * math.sqrt(T)) - carry) / 365
+    return dict(delta=delta, gamma=gamma, theta=theta, iv=v)
+
+
 def best_option(sym, kind, price, rules=OPT_RULES, now=None):
     """أفضل عقد حسب شروطنا. يرجع (العقد، السبب): ok / error / no_exp / no_match"""
     a = api()
@@ -505,9 +540,16 @@ def best_option(sym, kind, price, rules=OPT_RULES, now=None):
             s = snaps.get(c["symbol"]) or {}
             q, g = s.get("latestQuote") or {}, s.get("greeks") or {}
             bid, ask = float(q.get("bp") or 0), float(q.get("ap") or 0)
-            if bid <= 0 or ask < bid or not g:
+            if bid <= 0 or ask < bid:
                 continue
             mid = (bid + ask) / 2
+            if not g:
+                close = dt.datetime.combine(e, dt.time(16, 0), NY)
+                T = max((close - now).total_seconds(), 60) / (365 * 24 * 3600)
+                g = bs_greeks(kind, price, float(c["strike_price"]), T, mid)
+                if not g:
+                    continue
+                s = dict(s, impliedVolatility=g["iv"])
             spread = (ask - bid) / mid
             delta, gamma, theta = abs(g.get("delta", 0)), g.get("gamma", 0), g.get("theta", 0)
             bar = s.get("dailyBar") or {}
