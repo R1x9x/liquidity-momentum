@@ -292,10 +292,24 @@ def contract_won(r):
     return round((r["high"] - r["entry"]) * 100, 2) >= WIN_DOLLARS
 
 
-F["cell"] = font("Bold", 32)
-F["tiny"] = font("Regular", 23)
-F["pill_s"] = font("Bold", 22)
 ROW_H = 108
+ROWS_FIT = 1240  # height the table may take before rows shrink, so a busy day still fits one phone screen
+_GEO = {}
+
+
+def geo(n):
+    """Row height and fonts for n rows: full size up to ~11 rows, then smaller down to 64px per row."""
+    h = int(max(64, min(ROW_H, ROWS_FIT / max(1, n))))
+    if h not in _GEO:
+        k = h / ROW_H
+        _GEO[h] = dict(h=h, cell=font("Bold", round(32 * max(k, 0.8))), tiny=font("Regular", round(23 * max(k, 0.82))),
+                       pill=font("Bold", round(22 * max(k, 0.82))), ph=round(34 * max(k, 0.75)),
+                       top=round(14 * k), val=round(22 * k), sub=round(64 * k), sub2=round(66 * k))
+    return _GEO[h]
+
+
+def table_height(n):
+    return geo(n)["h"] * max(1, n)
 COL_W = 196  # three value columns on the left; the contract/stock name takes the rest
 
 
@@ -312,26 +326,28 @@ def table(d, y, rows, name_label, draw_name):
         ctext(d, col_x(i), y, h, F["small"], MUTED)
     y += 46
     top = y
-    d.rounded_rectangle((PAD, y, W - PAD, y + ROW_H * len(rows) + 8), radius=24, fill=CARD)
+    g = geo(len(rows))
+    rh = g["h"]
+    d.rounded_rectangle((PAD, y, W - PAD, y + rh * len(rows) + 8), radius=24, fill=CARD)
     y += 4
     for k, r in enumerate(rows):
         if k:
             d.line((PAD + 24, y, W - PAD - 24, y), fill=LINE, width=1)
-        color = draw_name(d, y, r)
-        d.rounded_rectangle((W - PAD - 8, y + 18, W - PAD, y + ROW_H - 18), radius=4, fill=color)
-        d.text((col_x(0), y + 22), f"${r['entry']:.2f}", font=F["cell"], fill=TEXT, anchor="ma")
+        color = draw_name(d, y, r, g)
+        d.rounded_rectangle((W - PAD - 8, y + rh // 6, W - PAD, y + rh - rh // 6), radius=4, fill=color)
+        d.text((col_x(0), y + g["val"]), f"${r['entry']:.2f}", font=g["cell"], fill=TEXT, anchor="ma")
         for i, val, extra in ((1, r["high"], r["high_time"]), (2, r["close"], None)):
-            d.text((col_x(i), y + 22), f"${val:.2f}", font=F["cell"], fill=TEXT, anchor="ma")
+            d.text((col_x(i), y + g["val"]), f"${val:.2f}", font=g["cell"], fill=TEXT, anchor="ma")
             p = pct(r["entry"], val)
             line = f"{p:+.0f}%" + (f"  {extra}" if extra else "")
-            d.text((col_x(i), y + 66), ar(line), font=F["tiny"], fill=UP if p >= 0 else DN, anchor="ma")
-        y += ROW_H
-    return top + ROW_H * len(rows) + 8 + 24
+            d.text((col_x(i), y + g["sub2"]), ar(line), font=g["tiny"], fill=UP if p >= 0 else DN, anchor="ma")
+        y += rh
+    return top + rh * len(rows) + 8 + 24
 
 
 def notes_block(d, y, notes):
     for line in notes:
-        rtext(d, W - PAD, y, line, F["tiny"], MUTED)
+        rtext(d, W - PAD, y, line, geo(1)["tiny"], MUTED)
         y += 36
     return y - 20
 
@@ -339,7 +355,7 @@ def notes_block(d, y, notes):
 def contract_report(rows, day, when):
     """rows: sym, side, kind, strike, exp_label, time, entry, high, high_time, close.
     entry = ask at the alert; high/close come from the contract's trades after it."""
-    img = Image.new("RGB", (W, 760 + 60 + ROW_H * max(1, len(rows)) + 200), BG)
+    img = Image.new("RGB", (W, 760 + 60 + table_height(len(rows)) + 200), BG)
     d = ImageDraw.Draw(img)
     win = sum(contract_won(r) for r in rows)
     cost = sum(r["entry"] * 100 for r in rows)
@@ -356,13 +372,13 @@ def contract_report(rows, day, when):
                 sum((r["close"] - r["entry"]) * 100 for r in rows if not contract_won(r)),
                 cost) - 6
 
-    def name(d, y, r):
+    def name(d, y, r, g):
         color = UP if r["side"] == "up" else DN
         xr = W - PAD - 28
-        xr -= rtext(d, xr, y + 14, r["sym"], F["cell"]) + 12
-        xr -= pill(d, xr, y + 20, r["kind"].upper(), color, BG, f=F["pill_s"], h=34) + 10
-        rtext(d, xr, y + 14, f"${r['strike']:g}", F["cell"])
-        rtext(d, W - PAD - 28, y + 64, f"{r['time']} · {r['exp_label']}", F["tiny"], MUTED)
+        xr -= rtext(d, xr, y + g["top"], r["sym"], g["cell"]) + 12
+        xr -= pill(d, xr, y + g["top"] + 6, r["kind"].upper(), color, BG, f=g["pill"], h=g["ph"]) + 10
+        rtext(d, xr, y + g["top"], f"${r['strike']:g}", g["cell"])
+        rtext(d, W - PAD - 28, y + g["sub"], f"{r['time']} · {r['exp_label']}", g["tiny"], MUTED)
         return color
 
     y = table(d, y, rows, "العقد", name)
@@ -377,7 +393,7 @@ PENNY_STAKE = 1000  # dollars assumed per penny alert for the report totals
 
 def penny_report(rows, day, when):
     """rows: sym, score, time, entry, high, high_time, close (stock prices)."""
-    img = Image.new("RGB", (W, 760 + 60 + ROW_H * max(1, len(rows)) + 200), BG)
+    img = Image.new("RGB", (W, 760 + 60 + table_height(len(rows)) + 200), BG)
     d = ImageDraw.Draw(img)
     win = sum(r["close"] > r["entry"] for r in rows)
     y = report_header(img, d, "تقرير الأسهم الصغيرة", day, [
@@ -392,11 +408,11 @@ def penny_report(rows, day, when):
     y = pnl_row(d, y - 24, sum(x for x in res if x > 0), sum(x for x in res if x <= 0),
                 PENNY_STAKE * len(rows)) - 6
 
-    def name(d, y, r):
+    def name(d, y, r, g):
         xr = W - PAD - 28
-        xr -= rtext(d, xr, y + 14, r["sym"], F["cell"]) + 12
-        pill(d, xr, y + 20, f"{r['score']}/10", SIGNAL, BG, f=F["pill_s"], h=34)
-        rtext(d, W - PAD - 28, y + 64, f"التنبيه {r['time']}", F["tiny"], MUTED)
+        xr -= rtext(d, xr, y + g["top"], r["sym"], g["cell"]) + 12
+        pill(d, xr, y + g["top"] + 6, f"{r['score']}/10", SIGNAL, BG, f=g["pill"], h=g["ph"])
+        rtext(d, W - PAD - 28, y + g["sub"], f"التنبيه {r['time']}", g["tiny"], MUTED)
         return SIGNAL
 
     y = table(d, y, rows, "السهم", name)
@@ -462,4 +478,5 @@ if __name__ == "__main__":
     open(os.path.join(out, "report-contracts.png"), "wb").write(contract_report(crow, day, "11:05 م"))
     prow = [dict(sym="ABCD", score=7, time="6:20 م", entry=2.84, high=3.31, high_time="7:02 م", close=3.05),
             dict(sym="WXYZ", score=8, time="8:45 م", entry=1.62, high=1.70, high_time="8:52 م", close=1.41)]
+    prow = [dict(prow[i % 2], sym=f"S{i:02d}") for i in range(17)]
     open(os.path.join(out, "report-penny.png"), "wb").write(penny_report(prow, day, "11:05 م"))
