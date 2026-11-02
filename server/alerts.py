@@ -91,7 +91,8 @@ def save_sent(day, s):
 
 def remember(day, r, opt, kind):
     """يحفظ التنبيه لتقرير نهاية الجلسة (سعر العقد = سعر الطلب وقت التنبيه)."""
-    rec = dict(ts=dt.datetime.now(NY).isoformat(), list=kind, sym=r["sym"], side=r["side"], score=int(r["score"]))
+    rec = dict(ts=dt.datetime.now(NY).isoformat(), list=kind, sym=r["sym"], side=r["side"], score=int(r["score"]),
+               price=round(float(r["price"]), 4))
     if opt:
         rec.update(kind=opt["kind"], strike=float(opt["strike"]), exp_label=opt["exp_label"],
                    option=opt["symbol"], entry=float(opt["ask"]))

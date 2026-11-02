@@ -52,7 +52,7 @@ def csv_records(state_dir, day):
             if key in seen:
                 continue
             seen.add(key)
-            rec = dict(ts=ts.isoformat(), list=kind, sym=row[1], side=row[2], score=int(row[3]))
+            rec = dict(ts=ts.isoformat(), list=kind, sym=row[1], side=row[2], score=int(row[3]), price=float(row[4]))
             if kind == "big":
                 exp = dt.date.fromisoformat(row[8])
                 strike = float(row[7])
@@ -70,8 +70,12 @@ def csv_records(state_dir, day):
 def records(state_dir, day):
     """ملف اليوم، ويكمّل من signals.csv أي تنبيه ناقص."""
     recs = load(state_dir, day)
+    extra = {(r["sym"], r["list"], r["side"]): r for r in csv_records(state_dir, day)}
+    for r in recs:  # التنبيهات القديمة ما فيها سعر السهم: ناخذه من signals.csv
+        if "price" not in r and (r["sym"], r["list"], r["side"]) in extra:
+            r["price"] = extra[(r["sym"], r["list"], r["side"])]["price"]
     have = {(r["sym"], r["list"], r["side"]) for r in recs}
-    return recs + [r for r in csv_records(state_dir, day) if (r["sym"], r["list"], r["side"]) not in have]
+    return recs + [r for k, r in extra.items() if k not in have]
 
 
 def touch(state_dir, day):
@@ -118,7 +122,9 @@ def build(recs, day):
     d = dt.date.fromisoformat(day)
     start = dt.datetime.combine(d, dt.time(9, 30), NY)
     end = dt.datetime.combine(d, dt.time(16, 0), NY)
-    big = [r for r in recs if r["list"] == "big"]
+    # العقود فقط لأسهم سعرها ضمن حدود الأسهم الكبيرة (التنبيهات القديمة بدون سعر نقيس بالسترايك)
+    big = [r for r in recs if r["list"] == "big" and r["sym"] == rc.MARKET
+           or r["list"] == "big" and rc.BIG_PRICE[0] <= r.get("price", r.get("strike", 0)) <= rc.BIG_PRICE[1]]
     penny = [r for r in recs if r["list"] == "penny"]
     obars = _option_bars(a, sorted({r["option"] for r in big}), start, end) if big else {}
     sbars = _stock_bars(a, sorted({r["sym"] for r in penny}), start, end) if penny else {}
