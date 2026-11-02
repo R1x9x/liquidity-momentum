@@ -16,6 +16,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import radar_core as rc  # noqa: E402
 import cards  # noqa: E402
+import report  # noqa: E402
 
 TOKEN = os.environ["TG_TOKEN"]
 CHAT = os.environ["TG_CHAT_ID"]
@@ -82,6 +83,44 @@ def save_sent(day, s):
     json.dump(sorted(s), open(sent_path(day), "w"))
 
 
+def remember(day, r, opt, kind):
+    """يحفظ التنبيه لتقرير نهاية الجلسة (سعر العقد = سعر الطلب وقت التنبيه)."""
+    rec = dict(ts=dt.datetime.now(NY).isoformat(), list=kind, sym=r["sym"], side=r["side"], score=r["score"])
+    if opt:
+        rec.update(kind=opt["kind"], strike=opt["strike"], exp_label=opt["exp_label"],
+                   option=opt["symbol"], entry=opt["ask"])
+    else:
+        rec.update(entry=round(r["price"], 4))
+    report.add(STATE_DIR, day, rec)
+
+
+def send_reports(day):
+    crow, prow = report.build(report.load(STATE_DIR, day), day)
+    label = report.day_label(day)
+    when = riyadh_time()
+    ok = send_photo(cards.contract_report(crow, label, when), f"📊 تقرير العقود | نهاية جلسة {label}")
+    if PENNY_ALERTS:
+        ok = send_photo(cards.penny_report(prow, label, when), f"📊 تقرير الأسهم الصغيرة | نهاية جلسة {label}") and ok
+    return ok
+
+
+def maybe_report(now_ny):
+    """بعد الإغلاق بخمس دقايق، مرة وحدة لكل يوم اشتغل فيه الرادار."""
+    day = now_ny.strftime("%Y-%m-%d")
+    done = os.path.join(STATE_DIR, f"report-{day}.done")
+    if (now_ny.hour, now_ny.minute) < (16, 5) or os.path.exists(done) \
+            or not os.path.exists(report.path(STATE_DIR, day)):
+        return
+    try:
+        if send_reports(day):
+            open(done, "w").close()
+            log("report sent", day)
+    except Exception as e:
+        log("report error", e)
+        open(done, "w").close()  # لا نكرر المحاولة كل دقيقة
+        send("⚠️ ما قدرت أطلع تقرير نهاية الجلسة اليوم.")
+
+
 def log_signal(r, opt, kind):
     path = os.path.join(STATE_DIR, "signals.csv")
     new = not os.path.exists(path)
@@ -111,6 +150,7 @@ def alert_big(tickers, sent, day):
                    f"{kind.upper()} ${opt['strike']:g} | {opt['exp_label']}")
         if send_photo(cards.contract_card(r, opt, riyadh_time()), caption):
             log_signal(r, opt, "big")
+            remember(day, r, opt, "big")
             sent.add(key)
             save_sent(day, sent)
             log("alert", key, r["score"], opt["symbol"])
@@ -126,6 +166,7 @@ def alert_penny(mkt, sent, day):
         caption = f"🟡 سهم صغير | 🟢 صعود | {r['sym']}"
         if send_photo(cards.penny_card(r, r["split"], riyadh_time()), caption):
             log_signal(r, None, "penny")
+            remember(day, r, None, "penny")
             sent.add(key)
             save_sent(day, sent)
             log("penny alert", key, r["score"])
@@ -147,9 +188,11 @@ def main():
         try:
             now_ny = dt.datetime.now(NY)
             if not market_open(now_ny):
+                maybe_report(now_ny)
                 time.sleep(60)
                 continue
             day = now_ny.strftime("%Y-%m-%d")
+            report.touch(STATE_DIR, day)
             sent = load_sent(day)
             mkt, n = alert_big(tickers, sent, day)
             m = 0
@@ -165,4 +208,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:2] == ["report"]:  # يدوي: python alerts.py report [YYYY-MM-DD]
+        send_reports(sys.argv[2] if len(sys.argv) > 2 else dt.datetime.now(NY).strftime("%Y-%m-%d"))
+    else:
+        main()

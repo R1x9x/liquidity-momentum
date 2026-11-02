@@ -226,6 +226,136 @@ def penny_card(sig, split, when):
     return finish(img, footer(d, y, when))
 
 
+def pct_tiles(d, y, items, x0=PAD + 28, x1=W - PAD - 28, h=150):
+    """Tiles with a value and an optional colored percent under it: (label, value, pct)."""
+    gap = 16
+    n = len(items)
+    w = (x1 - x0 - gap * (n - 1)) / n
+    for i, (label, value, pct) in enumerate(items):
+        xr = x1 - i * (w + gap)
+        d.rounded_rectangle((xr - w, y, xr, y + h), radius=18, fill=TILE)
+        ctext(d, xr - w / 2, y + 12, label, F["small"], MUTED)
+        d.text((xr - w / 2, y + 50), value, font=F["val"], fill=TEXT, anchor="ma")
+        if pct is not None:
+            d.text((xr - w / 2, y + 100), ar(f"{pct:+.0f}%"), font=F["body"],
+                   fill=UP if pct >= 0 else DN, anchor="ma")
+    return y + h
+
+
+def report_header(img, d, title, day, stats):
+    """Logo + title + date, then summary tiles: stats = [(label, value, color)]."""
+    y = PAD
+    xr = W - PAD
+    lw = logo(img, xr, y, 96)
+    tx = xr - lw - (24 if lw else 0)
+    rtext(d, tx, y - 4, title, F["big"])
+    rtext(d, tx, y + 72, f"نهاية جلسة {day}", F["body"], MUTED)
+    y += 150
+    return tiles(d, y, stats, x0=PAD, x1=W - PAD) + 40
+
+
+def money(x):
+    return f"{'+' if x > 0 else '-' if x < 0 else ''}${abs(x):,.0f}"
+
+
+def pnl_row(d, y, gain, loss, cost):
+    """Total profit / total loss / net in dollars and as % of the total cost."""
+    p = lambda x: x / cost * 100 if cost else 0
+    pct_tiles(d, y, [("إجمالي الربح", money(gain), p(gain)),
+                     ("إجمالي الخسارة", money(loss), p(loss)),
+                     ("الصافي", money(gain + loss), p(gain + loss))], x0=PAD, x1=W - PAD)
+    return y + 150 + 40
+
+
+def pct(a, b):
+    return (b / a - 1) * 100 if a else 0
+
+
+WIN_DOLLARS = 50  # a contract counts as a win once it traded $50 (per contract) above the alert price
+
+
+def contract_won(r):
+    return round((r["high"] - r["entry"]) * 100, 2) >= WIN_DOLLARS
+
+
+def contract_report(rows, day, when):
+    """rows: sym, side, kind, strike, exp_label, time, entry, high, high_time, close.
+    entry = ask at the alert; high/close come from the contract's trades after it."""
+    img = Image.new("RGB", (W, 900 + 300 * max(1, len(rows))), BG)
+    d = ImageDraw.Draw(img)
+    win = sum(contract_won(r) for r in rows)
+    y = report_header(img, d, "تقرير العقود", day, [
+        ("التنبيهات", str(len(rows)), None),
+        ("رابحة", str(win), UP),
+        ("خاسرة", str(len(rows) - win), DN)])
+    if rows:
+        # winners count +WIN_DOLLARS; every contract that missed the target goes to the loss side at its close
+        y = pnl_row(d, y - 24, WIN_DOLLARS * win,
+                    sum((r["close"] - r["entry"]) * 100 for r in rows if not contract_won(r)),
+                    sum(r["entry"] * 100 for r in rows))
+    if not rows:
+        d.rounded_rectangle((PAD, y, W - PAD, y + 140), radius=24, fill=CARD)
+        ctext(d, W / 2, y + 48, "ما جاك ولا تنبيه عقد اليوم", F["h2"], MUTED)
+        y += 140 + 30
+    for r in rows:
+        color = UP if r["side"] == "up" else DN
+        d.rounded_rectangle((PAD, y, W - PAD, y + 270), radius=26, fill=CARD)
+        d.rounded_rectangle((W - PAD - 10, y, W - PAD, y + 270), radius=5, fill=color)
+        xr = W - PAD - 36
+        xr -= rtext(d, xr, y + 18, r["sym"], F["h2"]) + 18
+        xr -= pill(d, xr, y + 22, r["kind"].upper(), color, BG, h=44) + 14
+        rtext(d, xr, y + 18, f"${r['strike']:g}", F["h2"])
+        d.text((PAD + 28, y + 26), ar(f"التنبيه {r['time']}  ·  {r['exp_label']}"),
+               font=F["small"], fill=MUTED, anchor="la")
+        pct_tiles(d, y + 86, [
+            ("سعره وقت التنبيه", f"${r['entry']:.2f}", None),
+            (f"أعلى سعر · {r['high_time']}", f"${r['high']:.2f}", pct(r["entry"], r["high"])),
+            ("سعر الإغلاق", f"${r['close']:.2f}", pct(r["entry"], r["close"]))])
+        y += 270 + 24
+    y += 4
+    rtext(d, W - PAD, y, f"رابحة = وصل العقد {WIN_DOLLARS}$ فوق سعره وقت التنبيه، وتنحسب ربح {WIN_DOLLARS}$ على أساس البيع عند الهدف.",
+          F["small"], MUTED)
+    y += 40
+    rtext(d, W - PAD, y, f"خاسرة = ما وصل {WIN_DOLLARS}$، وتنحسب على سعر الإغلاق. النسبة من إجمالي تكلفة العقود.", F["small"], MUTED)
+    return finish(img, footer(d, y + 30, when))
+
+
+PENNY_STAKE = 1000  # dollars assumed per penny alert for the report totals
+
+
+def penny_report(rows, day, when):
+    """rows: sym, score, time, entry, high, high_time, close (stock prices)."""
+    img = Image.new("RGB", (W, 900 + 300 * max(1, len(rows))), BG)
+    d = ImageDraw.Draw(img)
+    win = sum(r["close"] > r["entry"] for r in rows)
+    y = report_header(img, d, "تقرير الأسهم الصغيرة", day, [
+        ("التنبيهات", str(len(rows)), None),
+        ("أغلق فوق سعر التنبيه", str(win), UP),
+        ("أغلق تحت سعر التنبيه", str(len(rows) - win), DN)])
+    if rows:
+        res = [PENNY_STAKE * pct(r["entry"], r["close"]) / 100 for r in rows]
+        y = pnl_row(d, y - 24, sum(x for x in res if x > 0), sum(x for x in res if x <= 0), PENNY_STAKE * len(rows))
+    if not rows:
+        d.rounded_rectangle((PAD, y, W - PAD, y + 140), radius=24, fill=CARD)
+        ctext(d, W / 2, y + 48, "ما جاك ولا تنبيه سهم صغير اليوم", F["h2"], MUTED)
+        y += 140 + 30
+    for r in rows:
+        d.rounded_rectangle((PAD, y, W - PAD, y + 270), radius=26, fill=CARD)
+        d.rounded_rectangle((W - PAD - 10, y, W - PAD, y + 270), radius=5, fill=SIGNAL)
+        xr = W - PAD - 36
+        xr -= rtext(d, xr, y + 18, r["sym"], F["h2"]) + 18
+        pill(d, xr, y + 22, f"{r['score']}/10", SIGNAL, BG, h=44)
+        d.text((PAD + 28, y + 26), ar(f"التنبيه {r['time']}"), font=F["small"], fill=MUTED, anchor="la")
+        pct_tiles(d, y + 86, [
+            ("سعره وقت التنبيه", f"${r['entry']:.2f}", None),
+            (f"أعلى سعر · {r['high_time']}", f"${r['high']:.2f}", pct(r["entry"], r["high"])),
+            ("سعر الإغلاق", f"${r['close']:.2f}", pct(r["entry"], r["close"]))])
+        y += 270 + 24
+    y += 4
+    rtext(d, W - PAD, y, f"الإجمالي على افتراض {PENNY_STAKE:,}$ لكل تنبيه، من سعر التنبيه إلى الإغلاق.", F["small"], MUTED)
+    return finish(img, footer(d, y + 30, when))
+
+
 if __name__ == "__main__":
     import sys
     out = sys.argv[1] if len(sys.argv) > 1 else "."
@@ -261,3 +391,17 @@ if __name__ == "__main__":
     psig = dict(sym="ABCD", price=2.84, chg=6.40, score=7, checks=penny_checks)
     split = dict(ratio="1:10", date="10/24", drop=14.2)
     open(os.path.join(out, "card-penny.png"), "wb").write(penny_card(psig, split, "11:20 م"))
+
+    day = "الإثنين 11/02"
+    crow = [dict(sym="TSLA", side="up", kind="call", strike=415, exp_label="ينتهي اليوم", time="5:12 م",
+                 entry=1.52, high=2.40, high_time="6:05 م", close=1.10),
+            dict(sym="NVDA", side="down", kind="put", strike=198, exp_label="ينتهي الجمعة 11/06", time="7:40 م",
+                 entry=1.85, high=2.35, high_time="8:15 م", close=2.10),
+            dict(sym="SMCI", side="up", kind="call", strike=34.5, exp_label="ينتهي الجمعة 11/06", time="9:02 م",
+                 entry=1.20, high=1.26, high_time="9:10 م", close=0.64),
+            dict(sym="AMD", side="up", kind="call", strike=262.5, exp_label="ينتهي اليوم", time="9:30 م",
+                 entry=1.60, high=1.95, high_time="10:12 م", close=1.75)]
+    open(os.path.join(out, "report-contracts.png"), "wb").write(contract_report(crow, day, "11:05 م"))
+    prow = [dict(sym="ABCD", score=7, time="6:20 م", entry=2.84, high=3.31, high_time="7:02 م", close=3.05),
+            dict(sym="WXYZ", score=8, time="8:45 م", entry=1.62, high=1.70, high_time="8:52 م", close=1.41)]
+    open(os.path.join(out, "report-penny.png"), "wb").write(penny_report(prow, day, "11:05 م"))
