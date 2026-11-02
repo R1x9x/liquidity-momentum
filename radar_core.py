@@ -16,7 +16,7 @@ NY = ZoneInfo("America/New_York")
 MARKET = "SPY"
 
 DEFAULT_TICKERS = (
-    "AAPL MSFT NVDA AMD TSLA META AMZN GOOGL NFLX AVGO PLTR SMCI COIN MSTR SOFI "
+    "SPY AAPL MSFT NVDA AMD TSLA META AMZN GOOGL NFLX AVGO PLTR SMCI COIN MSTR SOFI "
     "UBER SHOP CRWD SNOW PANW MU INTC ARM MRVL RIVN LCID NIO BABA PYPL XYZ "
     "ROKU DKNG HOOD RBLX AFRM UPST MARA RIOT CVNA ENPH"
 )
@@ -175,7 +175,7 @@ def last_session(a):
 
 def load_alpaca(tks):
     a = api()
-    tks = list(tks)
+    tks = list(dict.fromkeys(tks))
     sess = a.sessions()
     day = last_session(a)
     prior = [d for d in sess if d < day]
@@ -234,6 +234,7 @@ def load_yahoo(tks, daily=None):
 
 
 def load_market(tks, source):
+    tks = list(dict.fromkeys(tks))
     return load_alpaca(tks) if source == "alpaca" else load_yahoo(tks)
 
 
