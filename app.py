@@ -143,7 +143,7 @@ with st.sidebar:
     st.markdown("<div class='rtl'><b>الإعدادات</b></div>", unsafe_allow_html=True)
     tickers_txt = st.text_area("الأسهم (افصل بمسافة)", DEFAULT_TICKERS, height=150)
     min_score = st.slider("أقل عدد نقاط للإشارة القوية (من 10)", 4, 10, 7)
-    flow_len = st.slider("فترة حساب السيولة (دقائق)", 5, 60, 15)
+    flow_len = st.slider("فترة حساب السيولة (دقائق)", 5, 60, 10)
     rvol_min = st.slider("أقل حجم مقابل المعتاد (RVOL)", 1.0, 5.0, 2.0, 0.1)
     in_min = st.slider("سيولة داخلة قوية من %", 50, 90, 65)
     out_max = st.slider("سيولة خارجة قوية تحت %", 10, 50, 35)
@@ -509,6 +509,10 @@ def cards():
         shown = [r for r in shown if r["score"] >= min_score]
     rank = {"up": 2, "dn": 2, "acc": 1, "": 0}
     shown = sorted(shown, key=lambda r: (rank[r["status"]], r[sort_key]), reverse=True)
+    # SPY ثابت أول بطاقة دايماً (مؤشر السوق)، ما يتحرك مع الترتيب ولا ينخفي بالفلتر
+    spy = [r for r in results if r["sym"] == rc.MARKET]
+    if spy:
+        shown = spy + [r for r in shown if r["sym"] != rc.MARKET]
     if not shown:
         st.info("ما فيه أسهم تطابق الفلتر الحين. خفّض عدد النقاط المطلوب من الإعدادات أو انتظر.")
     if show_opt and shown and not penny:

@@ -22,7 +22,7 @@ DEFAULT_TICKERS = (
 )
 
 # الإعدادات الافتراضية للنقاط العشر (الموقع يقدر يغيرها من الإعدادات)
-PARAMS = dict(flow_len=15, rvol_min=2.0, spike_min=3.0, in_min=65, out_max=35, near_pct=1.0,
+PARAMS = dict(flow_len=10, rvol_min=2.0, spike_min=3.0, in_min=65, out_max=35, near_pct=1.0,
               near_tl=0.4, atr_mult=0.5, rs_min=1.0, mom_min=0.5, min_score=7, min_touch=3)
 
 # شروط العقد: يومي أو أقرب أسبوعي، تكلفته (سعر الطلب × 100) ضمن الميزانية، فرق ضيق، ودلتا متوسطة
