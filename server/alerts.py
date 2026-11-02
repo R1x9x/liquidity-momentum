@@ -74,28 +74,44 @@ def sent_path(day):
 
 def load_sent(day):
     try:
-        return set(json.load(open(sent_path(day))))
+        sent = set(json.load(open(sent_path(day))))
     except Exception:
-        return set()
+        sent = set()
+    # كل تنبيه انرسل اليوم ومسجل في signals.csv ما يتكرر حتى لو ملف sent ما انحفظ
+    for r in report.csv_records(STATE_DIR, day):
+        sent.add(f"{r['sym']}:penny" if r["list"] == "penny" else f"{r['sym']}:{r['side']}")
+    return sent
 
 
 def save_sent(day, s):
-    json.dump(sorted(s), open(sent_path(day), "w"))
+    with open(sent_path(day), "w") as f:
+        json.dump(sorted(s), f)
 
 
 def remember(day, r, opt, kind):
     """يحفظ التنبيه لتقرير نهاية الجلسة (سعر العقد = سعر الطلب وقت التنبيه)."""
-    rec = dict(ts=dt.datetime.now(NY).isoformat(), list=kind, sym=r["sym"], side=r["side"], score=r["score"])
+    rec = dict(ts=dt.datetime.now(NY).isoformat(), list=kind, sym=r["sym"], side=r["side"], score=int(r["score"]))
     if opt:
-        rec.update(kind=opt["kind"], strike=opt["strike"], exp_label=opt["exp_label"],
-                   option=opt["symbol"], entry=opt["ask"])
+        rec.update(kind=opt["kind"], strike=float(opt["strike"]), exp_label=opt["exp_label"],
+                   option=opt["symbol"], entry=float(opt["ask"]))
     else:
-        rec.update(entry=round(r["price"], 4))
+        rec.update(entry=round(float(r["price"]), 4))
     report.add(STATE_DIR, day, rec)
 
 
+def after_send(day, sent, key, r, opt, kind):
+    """نعلّم التنبيه كمُرسَل أول شي، عشان أي خطأ في السجلات ما يخليه يتكرر."""
+    sent.add(key)
+    save_sent(day, sent)
+    try:
+        log_signal(r, opt, kind)
+        remember(day, r, opt, kind)
+    except Exception as e:
+        log("record error", key, e)
+
+
 def send_reports(day):
-    crow, prow = report.build(report.load(STATE_DIR, day), day)
+    crow, prow = report.build(report.records(STATE_DIR, day), day)
     label = report.day_label(day)
     when = riyadh_time()
     ok = send_photo(cards.contract_report(crow, label, when), f"📊 تقرير العقود | نهاية جلسة {label}")
@@ -149,10 +165,7 @@ def alert_big(tickers, sent, day):
         caption = (f"{'🟢 صعود' if kind == 'call' else '🔴 هبوط'} | {r['sym']} | "
                    f"{kind.upper()} ${opt['strike']:g} | {opt['exp_label']}")
         if send_photo(cards.contract_card(r, opt, riyadh_time()), caption):
-            log_signal(r, opt, "big")
-            remember(day, r, opt, "big")
-            sent.add(key)
-            save_sent(day, sent)
+            after_send(day, sent, key, r, opt, "big")
             log("alert", key, r["score"], opt["symbol"])
     return mkt, len(results)
 
@@ -165,10 +178,7 @@ def alert_penny(mkt, sent, day):
             continue
         caption = f"🟡 سهم صغير | 🟢 صعود | {r['sym']}"
         if send_photo(cards.penny_card(r, r["split"], riyadh_time()), caption):
-            log_signal(r, None, "penny")
-            remember(day, r, None, "penny")
-            sent.add(key)
-            save_sent(day, sent)
+            after_send(day, sent, key, r, None, "penny")
             log("penny alert", key, r["score"])
     return len(results)
 

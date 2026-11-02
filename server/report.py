@@ -3,6 +3,7 @@
 التنبيهات تنحفظ في STATE_DIR/alerts-YYYY-MM-DD.json وقت إرسالها، والتقرير ينبني منها بعد الإغلاق.
 """
 import os
+import csv
 import json
 import datetime as dt
 from zoneinfo import ZoneInfo
@@ -28,7 +29,49 @@ def load(state_dir, day):
 def add(state_dir, day, rec):
     recs = load(state_dir, day)
     recs.append(rec)
-    json.dump(recs, open(path(state_dir, day), "w"), ensure_ascii=False)
+    tmp = path(state_dir, day) + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(recs, f, ensure_ascii=False)
+    os.replace(tmp, path(state_dir, day))
+
+
+def csv_records(state_dir, day):
+    """تنبيهات اليوم من signals.csv (أول مرة لكل سهم واتجاه) — احتياط لو ملف اليوم ناقص."""
+    out, seen = [], set()
+    try:
+        rows = list(csv.reader(open(os.path.join(state_dir, "signals.csv"), encoding="utf-8")))[1:]
+    except Exception:
+        return out
+    for row in rows:
+        try:
+            ts = dt.datetime.strptime(row[0], "%Y-%m-%d %H:%M").replace(tzinfo=RIYADH).astimezone(NY)
+            if str(ts.date()) != day:
+                continue
+            kind = row[10] if len(row) > 10 and row[10] else ("big" if row[6] else "penny")
+            key = (row[1], kind, row[2])
+            if key in seen:
+                continue
+            seen.add(key)
+            rec = dict(ts=ts.isoformat(), list=kind, sym=row[1], side=row[2], score=int(row[3]))
+            if kind == "big":
+                exp = dt.date.fromisoformat(row[8])
+                strike = float(row[7])
+                rec.update(kind=row[6], strike=strike, exp_label=rc.exp_label(exp, ts.date()),
+                           option=f"{row[1]}{exp:%y%m%d}{row[6][0].upper()}{round(strike * 1000):08d}",
+                           entry=float(row[9]) / 100)
+            else:
+                rec.update(entry=float(row[4]))
+            out.append(rec)
+        except Exception:
+            continue
+    return out
+
+
+def records(state_dir, day):
+    """ملف اليوم، ويكمّل من signals.csv أي تنبيه ناقص."""
+    recs = load(state_dir, day)
+    have = {(r["sym"], r["list"], r["side"]) for r in recs}
+    return recs + [r for r in csv_records(state_dir, day) if (r["sym"], r["list"], r["side"]) not in have]
 
 
 def touch(state_dir, day):

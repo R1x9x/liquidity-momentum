@@ -28,7 +28,9 @@ PAD = 48
 
 
 def font(weight, size):
-    return ImageFont.truetype(os.path.join(FONTS, f"IBMPlexSansArabic-{weight}.ttf"), size)
+    # BASIC layout: we shape and reorder Arabic ourselves; with libraqm (on the server) it would be reversed twice
+    return ImageFont.truetype(os.path.join(FONTS, f"IBMPlexSansArabic-{weight}.ttf"), size,
+                              layout_engine=ImageFont.Layout.BASIC)
 
 
 F = {
