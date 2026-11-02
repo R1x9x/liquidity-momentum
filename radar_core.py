@@ -21,6 +21,14 @@ DEFAULT_TICKERS = (
     "ROKU DKNG HOOD RBLX AFRM UPST MARA RIOT CVNA ENPH"
 )
 
+# الأسهم الكبيرة (بطاقات الموقع وتنبيهات العقود) فقط إذا سعر السهم بين 60$ و1500$
+BIG_PRICE = (float(os.environ.get("BIG_MIN_PRICE", "60")), float(os.environ.get("BIG_MAX_PRICE", "1500")))
+
+
+def big_price_ok(r):
+    return r["sym"] == MARKET or BIG_PRICE[0] <= r["price"] <= BIG_PRICE[1]
+
+
 # الإعدادات الافتراضية للنقاط العشر (الموقع يقدر يغيرها من الإعدادات)
 PARAMS = dict(flow_len=10, rvol_min=2.0, spike_min=3.0, in_min=65, out_max=35, near_pct=1.0,
               near_tl=0.4, atr_mult=0.5, rs_min=1.0, mom_min=0.5, min_score=7, min_touch=3)

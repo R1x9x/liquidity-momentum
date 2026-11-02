@@ -188,7 +188,7 @@ TICK = 3 if LIVE else REFRESH  # ثواني بين كل تحديث للأسعا�
 def load_big(tks, fetch, source, params):
     data = rc.load_market(fetch, source)
     results, mkt = rc.scan(data, tks, dict(params))
-    return results, mkt, data
+    return [r for r in results if rc.big_price_ok(r)], mkt, data
 
 
 @st.cache_resource(ttl=REFRESH - 5 if LIVE else REFRESH - 2, show_spinner=False)

@@ -1,6 +1,6 @@
 """
 خدمة تنبيهات رادار السيولة — تفحص الأسهم كل دقيقة وقت السوق وترسل تنبيهات تلقرام بالصور.
-الأسهم الكبيرة: تنبيه فقط إذا النقاط 7+ وفيه عقد مطابق للشروط. الأسهم الصغيرة: صعود 7+ فقط.
+الأسهم الكبيرة (سعرها 60$ إلى 1500$): تنبيه فقط إذا النقاط وصلت الحد وفيه عقد مطابق للشروط. الأسهم الصغيرة: صعود 7+ فقط.
 """
 import os
 import sys
@@ -157,7 +157,7 @@ def alert_big(tickers, sent, day):
     results, mkt = rc.scan(data, tickers)
     for r in results:
         key = f"{r['sym']}:{r['side']}"
-        if r["score"] < ALERT_MIN or key in sent:
+        if r["score"] < ALERT_MIN or key in sent or not rc.big_price_ok(r):
             continue
         kind = "call" if r["side"] == "up" else "put"
         opt, why = rc.best_option(r["sym"], kind, r["price"])
