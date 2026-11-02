@@ -20,7 +20,8 @@ import report  # noqa: E402
 
 TOKEN = os.environ["TG_TOKEN"]
 CHAT = os.environ["TG_CHAT_ID"]
-ALERT_MIN = int(os.environ.get("ALERT_MIN_SCORE", "7"))
+ALERT_MIN = int(os.environ.get("ALERT_MIN_SCORE", "7"))  # العقود
+PENNY_MIN = int(os.environ.get("PENNY_MIN_SCORE", "7"))  # الأسهم الصغيرة لها حد مستقل
 PENNY_ALERTS = os.environ.get("PENNY_ALERTS", "1") == "1"
 STATE_DIR = os.environ.get("STATE_DIR", "/opt/radar/state")
 os.makedirs(STATE_DIR, exist_ok=True)
@@ -174,7 +175,7 @@ def alert_penny(mkt, sent, day):
     results, _ = rc.penny_scan(mkt=mkt)
     for r in results:
         key = f"{r['sym']}:penny"
-        if r["score"] < ALERT_MIN or key in sent:
+        if r["score"] < PENNY_MIN or key in sent:
             continue
         caption = f"🟡 سهم صغير | 🟢 صعود | {r['sym']}"
         if send_photo(cards.penny_card(r, r["split"], riyadh_time()), caption):
@@ -190,10 +191,10 @@ def main():
         send("⚠️ الرادار ما لقى مفاتيح Alpaca، والتنبيهات متوقفة لين تنضاف.")
         while rc.data_source() != "alpaca":
             time.sleep(300)
-    log("starting, tickers:", len(tickers), "min score:", ALERT_MIN, "penny:", PENNY_ALERTS)
+    log("starting, tickers:", len(tickers), "min score:", ALERT_MIN, "penny:", PENNY_ALERTS, PENNY_MIN)
     send(f"✅ الرادار شغال على السيرفر ببيانات Alpaca اللحظية\n"
          f"يفحص {len(tickers)} سهم كل دقيقة وقت السوق، وينبهك عند {ALERT_MIN}/10 أو أكثر مع عقد مطابق."
-         + ("\nوالأسهم الصغيرة (1 إلى 5 دولار): صعود فقط." if PENNY_ALERTS else ""))
+         + (f"\nوالأسهم الصغيرة (1 إلى 5 دولار): صعود فقط عند {PENNY_MIN}/10 أو أكثر." if PENNY_ALERTS else ""))
     while True:
         try:
             now_ny = dt.datetime.now(NY)
