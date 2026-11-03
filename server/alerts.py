@@ -89,13 +89,28 @@ def save_sent(day, s):
         json.dump(sorted(s), f)
 
 
+def details(r, min_score):
+    """الشروط العشرة (✓/·) وأرقامها لحظة التنبيه — عشان نقارن الرابحة والخاسرة بعدين."""
+    vwap = r.get("vwap")
+    return dict(checks=[dict(name=n, ok=bool(ok), detail=d) for n, ok, d in r["checks"]],
+                metrics=dict(chg=round(float(r["chg"]), 2), rvol=round(float(r["rvol"]), 2),
+                             in_pct=round(float(r["in_pct"]), 1), mom=round(float(r["mom"]), 2),
+                             vwap_dist=round((float(r["price"]) / vwap - 1) * 100, 2) if vwap else None,
+                             sma_dist=round((float(r["price"]) / float(r["sma"]) - 1) * 100, 2),
+                             flow_len=rc.PARAMS["flow_len"], min_score=min_score))
+
+
 def remember(day, r, opt, kind):
     """يحفظ التنبيه لتقرير نهاية الجلسة (سعر العقد = سعر الطلب وقت التنبيه)."""
     rec = dict(ts=dt.datetime.now(NY).isoformat(), list=kind, sym=r["sym"], side=r["side"], score=int(r["score"]),
                price=round(float(r["price"]), 4))
+    rec.update(details(r, PENNY_MIN if kind == "penny" else ALERT_MIN))
     if opt:
         rec.update(kind=opt["kind"], strike=float(opt["strike"]), exp_label=opt["exp_label"],
-                   option=opt["symbol"], entry=float(opt["ask"]))
+                   option=opt["symbol"], entry=float(opt["ask"]),
+                   opt_info=dict(dte=opt["dte"], delta=round(float(opt["delta"]), 3), gamma=round(float(opt["gamma"]), 4),
+                                 theta=round(float(opt["theta"]), 4), spread=round(float(opt["spread"]), 2),
+                                 iv=round(float(opt["iv"]), 1), volume=int(opt["volume"]), oi=int(opt["oi"])))
     else:
         rec.update(entry=round(float(r["price"]), 4))
     report.add(STATE_DIR, day, rec)

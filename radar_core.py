@@ -445,7 +445,7 @@ def analyze(sym, intr, daily, mkt, b15, b60, p=PARAMS, side=None):
     status = side if strong else ("acc" if accum else "")
 
     return dict(sym=sym, price=price, chg=chg, rvol=rvol, in_pct=in_pct,
-                net_day=mf.sum(), mom=mom, sma=sma_live, tl=tl, side=side, score=score,
+                net_day=mf.sum(), mom=mom, sma=sma_live, vwap=vwap, tl=tl, side=side, score=score,
                 checks=checks, status=status, unusual=rvol >= p["rvol_min"],
                 last=today.index[-1])
 
