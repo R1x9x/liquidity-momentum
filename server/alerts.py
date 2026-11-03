@@ -203,10 +203,8 @@ def alert_big(tickers, sent, day):
             continue  # بدون عقد مطابق ما فيه تنبيه (ونرجع نشيك الدقيقة الجاية)
         caption = (f"{'🟢 صعود' if kind == 'call' else '🔴 هبوط'} | {r['sym']} | "
                    f"{kind.upper()} ${opt['strike']:g} | {opt['exp_label']}")
-        warn = rev_warning(spy, r["side"])
-        if warn:
-            caption += "\n⚠️ " + warn[0]
-        if send_photo(cards.contract_card(r, opt, riyadh_time(), warning=warn), caption):
+        # تحذير الارتداد على SPY بس: اختبار 58 يوم ما لقى إنه يقلل خسائر عقود الشركات
+        if send_photo(cards.contract_card(r, opt, riyadh_time()), caption):
             after_send(day, sent, key, r, opt, "big")
             log("alert", key, r["score"], opt["symbol"])
     return mkt, len(results), spy

@@ -13,10 +13,10 @@ except ImportError:
 HERE = os.path.dirname(os.path.abspath(__file__))
 FONTS = os.path.join(HERE, "fonts")
 
-BG = "#18202D"
-CARD = "#222C3C"
-TILE = "#2A3547"
-LINE = "#33405A"
+BG = "#0A0A0C"
+CARD = "#141519"
+TILE = "#1C1D22"
+LINE = "#26272E"
 TEXT = "#E6EAF0"
 MUTED = "#8A96A8"
 UP = "#3CC7A6"
@@ -94,6 +94,17 @@ def logo(img, x_right, y, size):
         return 0
 
 
+
+def brand(img, y=0):
+    """شعار الدب والثور واسم BINSAMHA RADAR أعلى بطاقة التنبيه."""
+    try:
+        b = Image.open(os.path.join(HERE, "brand.png")).convert("RGB")
+        img.paste(b, ((W - b.width) // 2, y))
+        return y + b.height + 24
+    except Exception:
+        return y
+
+
 def header(img, d, y, sym, badges, score, total, color, sub=None):
     xr = W - PAD
     lw = logo(img, xr, y + 6, 96)
@@ -138,7 +149,7 @@ def checklist(d, y, checks, color):
     rtext(d, W - PAD, y, "الشروط", F["h2"])
     d.text((PAD, y + 4), ar(f"تحقق {met} من {len(checks)}"), font=F["body"], fill=color, anchor="la")
     y += 66
-    row = 58
+    row = 54
     d.rounded_rectangle((PAD, y, W - PAD, y + row * len(checks) + 24), radius=24, fill=CARD)
     y += 12
     for i, (name, ok, detail) in enumerate(checks):
@@ -188,13 +199,13 @@ def contract_card(sig, opt, when, trial=False, warning=None):
     trial = إشارة تجريبية (SPY)، warning = (عنوان، [أسباب]) لتحذير احتمال الارتداد."""
     up = sig["side"] == "up"
     color = UP if up else DN
-    img = Image.new("RGB", (W, 2600), BG)
+    img = Image.new("RGB", (W, 3200), BG)
     d = ImageDraw.Draw(img)
 
     badges = [("صعود" if up else "هبوط", color, BG)]
     if trial:
         badges.append(("تجريبي · لا تتداول عليه", SIGNAL, BG))
-    y = header(img, d, PAD, sig["sym"], badges, sig["score"], len(sig["checks"]), color)
+    y = header(img, d, brand(img), sig["sym"], badges, sig["score"], len(sig["checks"]), color)
 
     # contract box
     top = y
@@ -246,7 +257,7 @@ def penny_info(d, y, info):
 def penny_card(sig, split, when, info=None):
     """sig: sym, price, chg, score, checks. split: None or ratio, date, drop.
     info: off_high (% عن أعلى سعر اليوم), pm (حجم ما قبل الافتتاح ÷ يوم عادي), news (عناوين اليوم)."""
-    img = Image.new("RGB", (W, 2400), BG)
+    img = Image.new("RGB", (W, 3000), BG)
     d = ImageDraw.Draw(img)
 
     def price_row(y):
@@ -254,7 +265,7 @@ def penny_card(sig, split, when, info=None):
         x -= rtext(d, x, y - 6, f"${sig['price']:.2f}", F["big"]) + 18
         pill(d, x, y + 10, f"{sig['chg']:+.2f}%", UP if sig["chg"] >= 0 else DN, BG)
 
-    y = header(img, d, PAD, sig["sym"],
+    y = header(img, d, brand(img), sig["sym"],
                [("سهم صغير", SIGNAL, BG), ("صعود", UP, BG)],
                sig["score"], len(sig["checks"]), UP, sub=price_row)
     y += 96
