@@ -169,17 +169,32 @@ def finish(img, h):
     return out.getvalue()
 
 
-def contract_card(sig, opt, when):
+def warning_box(d, y, title, reasons):
+    """تحذير احتمال ارتداد السوق: عنوان وأسبابه، كل سبب بسطر."""
+    h = 92 + 46 * len(reasons)
+    d.rounded_rectangle((PAD, y, W - PAD, y + h), radius=24, fill=CARD, outline=SIGNAL, width=3)
+    xr = W - PAD - 28
+    d.ellipse((xr - 34, y + 26, xr, y + 60), fill=SIGNAL)
+    ctext(d, xr - 17, y + 26, "!", F["h2"], BG)
+    rtext(d, xr - 50, y + 22, title, F["h2"], SIGNAL)
+    for i, r in enumerate(reasons):
+        rtext(d, xr - 50, y + 84 + 46 * i, f"• {r}", F["body"], TEXT)
+    return y + h + 28
+
+
+def contract_card(sig, opt, when, trial=False, warning=None):
     """sig: sym, side, score, checks. opt: kind, strike, exp_label, today, bid, ask,
-    cost, volume, oi. Greeks and spread drive the pick but stay off the card."""
+    cost, volume, oi. Greeks and spread drive the pick but stay off the card.
+    trial = إشارة تجريبية (SPY)، warning = (عنوان، [أسباب]) لتحذير احتمال الارتداد."""
     up = sig["side"] == "up"
     color = UP if up else DN
-    img = Image.new("RGB", (W, 2400), BG)
+    img = Image.new("RGB", (W, 2600), BG)
     d = ImageDraw.Draw(img)
 
-    y = header(img, d, PAD, sig["sym"],
-               [("صعود" if up else "هبوط", color, BG)],
-               sig["score"], len(sig["checks"]), color)
+    badges = [("صعود" if up else "هبوط", color, BG)]
+    if trial:
+        badges.append(("تجريبي · لا تتداول عليه", SIGNAL, BG))
+    y = header(img, d, PAD, sig["sym"], badges, sig["score"], len(sig["checks"]), color)
 
     # contract box
     top = y
@@ -201,6 +216,8 @@ def contract_card(sig, opt, when):
     y = tiles(d, y, [("التداول اليوم", f"{opt['volume']:,}", None),
                      ("العقود المفتوحة", f"{opt['oi']:,}", None)])
     y += 28 + 40
+    if warning:
+        y = warning_box(d, y - 12, *warning) + 12
 
     y = checklist(d, y, sig["checks"], color)
     return finish(img, footer(d, y, when))
@@ -363,14 +380,14 @@ def notes_block(d, y, notes):
     return y - 20
 
 
-def contract_report(rows, day, when):
+def contract_report(rows, day, when, title="تقرير العقود"):
     """rows: sym, side, kind, strike, exp_label, time, entry, high, high_time, close.
     entry = ask at the alert; high/close come from the contract's trades after it."""
     img = Image.new("RGB", (W, 760 + 60 + table_height(len(rows)) + 200), BG)
     d = ImageDraw.Draw(img)
     win = sum(contract_result(r) == "win" for r in rows)
     cost = sum(r["entry"] * 100 for r in rows)
-    y = report_header(img, d, "تقرير العقود", day, [
+    y = report_header(img, d, title, day, [
         total_tile(rows, cost, "عقد", "عقود"),
         ("رابحة", str(win), UP),
         ("خاسرة", str(len(rows) - win), DN)])

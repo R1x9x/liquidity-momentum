@@ -23,6 +23,7 @@ CHAT = os.environ["TG_CHAT_ID"]
 ALERT_MIN = int(os.environ.get("ALERT_MIN_SCORE", "7"))  # العقود
 PENNY_MIN = int(os.environ.get("PENNY_MIN_SCORE", "7"))  # الأسهم الصغيرة لها حد مستقل
 PENNY_ALERTS = os.environ.get("PENNY_ALERTS", "1") == "1"
+SPY_ALERTS = os.environ.get("SPY_ALERTS", "1") == "1"  # إشارة SPY التجريبية (زخم + حجم + اتساع السوق)
 STATE_DIR = os.environ.get("STATE_DIR", "/opt/radar/state")
 os.makedirs(STATE_DIR, exist_ok=True)
 
@@ -80,7 +81,8 @@ def load_sent(day):
         sent = set()
     # كل تنبيه انرسل اليوم ومسجل في signals.csv ما يتكرر حتى لو ملف sent ما انحفظ
     for r in report.csv_records(STATE_DIR, day):
-        sent.add(f"{r['sym']}:penny" if r["list"] == "penny" else f"{r['sym']}:{r['side']}")
+        sent.add(f"{r['sym']}:{r['list']}" if r["list"] == "penny"
+                 else f"SPY:spy-{r['side']}" if r["list"] == "spy" else f"{r['sym']}:{r['side']}")
     return sent
 
 
@@ -128,10 +130,13 @@ def after_send(day, sent, key, r, opt, kind):
 
 
 def send_reports(day):
-    crow, prow = report.build(report.records(STATE_DIR, day), day)
+    crow, prow, srow = report.build(report.records(STATE_DIR, day), day)
     label = report.day_label(day)
     when = riyadh_time()
     ok = send_photo(cards.contract_report(crow, label, when), f"📊 تقرير العقود | نهاية جلسة {label}")
+    if srow:  # يطلع بس في الأيام اللي جت فيها إشارة SPY تجريبية
+        ok = send_photo(cards.contract_report(srow, label, when, title="تقرير SPY التجريبي"),
+                        f"🧪 تقرير إشارة SPY التجريبية | نهاية جلسة {label}") and ok
     if PENNY_ALERTS:
         ok = send_photo(cards.penny_report(prow, label, when), f"📊 تقرير الأسهم الصغيرة | نهاية جلسة {label}") and ok
     return ok
@@ -168,12 +173,25 @@ def log_signal(r, opt, kind):
                     opt["exp"].strftime("%Y-%m-%d") if opt else "", round(opt["cost"]) if opt else "", kind])
 
 
+def rev_warning(spy, side):
+    """تحذير إذا SPY ممتد بنفس اتجاه التنبيه وفيه أسباب ارتداد: (عنوان، [أسباب]) أو None."""
+    if not spy or not spy["rev"] or spy["rev"]["dir"] != side:
+        return None
+    return f"احتمال ارتداد السوق بعد {'صعوده' if side == 'up' else 'نزوله'}", spy["rev"]["reasons"]
+
+
 def alert_big(tickers, sent, day):
     data = rc.load_alpaca(tickers + [rc.MARKET])
     results, mkt = rc.scan(data, tickers)
+    try:
+        spy = rc.spy_state(data, tickers)
+    except Exception as e:
+        log("spy state error", e)
+        spy = None
     for r in results:
         key = f"{r['sym']}:{r['side']}"
-        if r["score"] < ALERT_MIN or key in sent or not rc.big_price_ok(r):
+        # SPY له إشارة خاصة (alert_spy)، النقاط العشر ما تناسبه
+        if r["sym"] == rc.MARKET or r["score"] < ALERT_MIN or key in sent or not rc.big_price_ok(r):
             continue
         kind = "call" if r["side"] == "up" else "put"
         opt, why = rc.best_option(r["sym"], kind, r["price"])
@@ -181,10 +199,33 @@ def alert_big(tickers, sent, day):
             continue  # بدون عقد مطابق ما فيه تنبيه (ونرجع نشيك الدقيقة الجاية)
         caption = (f"{'🟢 صعود' if kind == 'call' else '🔴 هبوط'} | {r['sym']} | "
                    f"{kind.upper()} ${opt['strike']:g} | {opt['exp_label']}")
-        if send_photo(cards.contract_card(r, opt, riyadh_time()), caption):
+        warn = rev_warning(spy, r["side"])
+        if warn:
+            caption += "\n⚠️ " + warn[0]
+        if send_photo(cards.contract_card(r, opt, riyadh_time(), warning=warn), caption):
             after_send(day, sent, key, r, opt, "big")
             log("alert", key, r["score"], opt["symbol"])
-    return mkt, len(results)
+    return mkt, len(results), spy
+
+
+def alert_spy(spy, sent, day):
+    """إشارة SPY التجريبية: الشروط الثلاثة مع بعض + عقد مطابق، مرة باليوم لكل اتجاه."""
+    if not spy or not spy["signal"]:
+        return
+    key = f"SPY:spy-{spy['signal']}"
+    if key in sent:
+        return
+    kind = "call" if spy["signal"] == "up" else "put"
+    opt, why = rc.best_option(rc.MARKET, kind, spy["price"])
+    if not opt:
+        return
+    sig = dict(spy, side=spy["signal"])
+    warn = rev_warning(spy, spy["signal"])
+    caption = (f"🧪 SPY تجريبي | {'🟢 صعود' if kind == 'call' else '🔴 هبوط'} | "
+               f"{kind.upper()} ${opt['strike']:g} | {opt['exp_label']}") + (f"\n⚠️ {warn[0]}" if warn else "")
+    if send_photo(cards.contract_card(sig, opt, riyadh_time(), trial=True, warning=warn), caption):
+        after_send(day, sent, key, sig, opt, "spy")
+        log("spy alert", key, opt["symbol"])
 
 
 def alert_penny(mkt, sent, day):
@@ -210,6 +251,7 @@ def main():
     log("starting, tickers:", len(tickers), "min score:", ALERT_MIN, "penny:", PENNY_ALERTS, PENNY_MIN)
     send(f"✅ الرادار شغال على السيرفر ببيانات Alpaca اللحظية\n"
          f"يفحص {len(tickers)} سهم كل دقيقة وقت السوق، وينبهك عند {ALERT_MIN}/10 أو أكثر مع عقد مطابق."
+         + ("\nوإشارة SPY التجريبية (زخم + حجم + اتساع السوق) من 6 المغرب إلى 11 الليل." if SPY_ALERTS else "")
          + (f"\nوالأسهم الصغيرة (1 إلى 5 دولار): صعود فقط عند {PENNY_MIN}/10 أو أكثر." if PENNY_ALERTS else ""))
     while True:
         try:
@@ -221,7 +263,12 @@ def main():
             day = now_ny.strftime("%Y-%m-%d")
             report.touch(STATE_DIR, day)
             sent = load_sent(day)
-            mkt, n = alert_big(tickers, sent, day)
+            mkt, n, spy = alert_big(tickers, sent, day)
+            if SPY_ALERTS:
+                try:
+                    alert_spy(spy, sent, day)
+                except Exception as e:
+                    log("spy alert error", e)
             m = 0
             if PENNY_ALERTS:
                 try:

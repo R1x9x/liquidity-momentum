@@ -465,6 +465,73 @@ def scan(data, tks, p=PARAMS, side=None, mkt=None):
     return out, mkt
 
 
+# ---------------- SPY: إشارة خاصة (تجريبية) وتحذير الارتداد ----------------
+# مختبرة على 80 يوم (نوفمبر 2026): زخم + حجم + اتساع السوق مع بعض، من 10:00 إلى 15:00 نيويورك
+SPY_RULES = dict(mom=0.10, rvol=1.2, breadth=65, start=(10, 0), end=(15, 0))
+# الارتداد أرجح عند قمة/قاع نص ساعة بعد حركة 0.20%: بعيد عن VWAP، أو أسهم قليلة ماشية معه، أو حجم مفاجئ
+REV_RULES = dict(run=0.20, stretch=0.4, breadth=55, climax=2.5)
+
+
+def spy_state(data, tickers, rules=SPY_RULES, rev_rules=REV_RULES):
+    """حالة SPY الحين: إشارة الشروط الثلاثة (signal = up/dn/None) وتحذير الارتداد (rev)."""
+    today, past = split_days(data["intr"].get(MARKET), data["daily"].get(MARKET))
+    if today is None or past is None or len(today) < 12 or len(past) < 20:
+        return None
+    c, h, l, v = (today[k].to_numpy(float) for k in ("Close", "High", "Low", "Volume"))
+    price = c[-1]
+    mom = (price / c[-11] - 1) * 100
+    avg_vol = float(past["Volume"].tail(20).mean())
+    frac = min(max(((today.index[-1] - today.index[0]).total_seconds() / 60 + 1) / 390, 0.01), 1.0)
+    rvol = v.sum() / (avg_vol * frac) if avg_vol > 0 else 0
+    ups = tot = 0
+    for s in tickers:
+        d = data["intr"].get(s)
+        if s == MARKET or d is None:
+            continue
+        d = d[d.index.date == today.index[-1].date()]
+        if len(d) > 10:
+            ups += d["Close"].iloc[-1] > d["Close"].iloc[-11]
+            tot += 1
+    breadth = ups / tot * 100 if tot else 50
+    stretch = (price / float(vwap_of(today).iloc[-1]) - 1) * 100
+    mf = money_flow(today).tail(10)
+    inflow, outflow = mf[mf > 0].sum(), -mf[mf < 0].sum()
+    t = today.index[-1]
+    in_window = rules["start"] <= (t.hour, t.minute) <= rules["end"]
+    side = "up" if mom > 0 else "dn"
+    sg = 1 if side == "up" else -1
+    checks = [("زخم 10 دقائق", sg * mom >= rules["mom"], f"{mom:+.2f}%"),
+              ("حجم أعلى من المعتاد", rvol >= rules["rvol"], f"{rvol:.1f}x"),
+              ("اتساع السوق", (breadth if side == "up" else 100 - breadth) >= rules["breadth"],
+               f"{breadth if side == 'up' else 100 - breadth:.0f}%")]
+    signal = side if in_window and all(ok for _, ok, _ in checks) else None
+
+    # تحذير الارتداد: SPY عند أعلى/أدنى سعر بنص ساعة بعد حركة 0.20% أو أكثر
+    rev = None
+    run = (price / c[-31] - 1) * 100 if len(c) >= 36 else 0
+    rdir = "up" if run > 0 else "dn"
+    at_ext = h[-3:].max() >= h[-33:-3].max() if rdir == "up" else l[-3:].min() <= l[-33:-3].min()
+    if abs(run) >= rev_rules["run"] and at_ext:
+        rg = 1 if rdir == "up" else -1
+        with_spy = breadth if rdir == "up" else 100 - breadth
+        base = v[-35:-5].mean()
+        climax = v[-3:].mean() / base if base > 0 else 0
+        reasons = []
+        if rg * stretch >= rev_rules["stretch"]:
+            reasons.append(f"بعيد عن VWAP {abs(stretch):.1f}%")
+        if with_spy < rev_rules["breadth"]:
+            reasons.append(f"{with_spy:.0f}% بس من الأسهم ماشية معه")
+        if climax >= rev_rules["climax"]:
+            reasons.append(f"حجم مفاجئ {climax:.1f}x")
+        if reasons:
+            rev = dict(dir=rdir, reasons=reasons)
+    return dict(sym=MARKET, price=price, chg=(price / float(past["Close"].iloc[-1]) - 1) * 100, side=side,
+                score=sum(ok for _, ok, _ in checks), checks=checks, signal=signal, rev=rev,
+                mom=mom, rvol=rvol, breadth=breadth, stretch=stretch,
+                in_pct=inflow / (inflow + outflow) * 100 if inflow + outflow > 0 else 50,
+                sma=float((past["Close"].tail(19).sum() + price) / 20), vwap=price / (1 + stretch / 100))
+
+
 def live_quotes(syms):
     """آخر سعر ونسبة التغير من إغلاق أمس لكل سهم (طلب واحد خفيف من Alpaca)."""
     a = api()

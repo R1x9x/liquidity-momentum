@@ -102,6 +102,7 @@ h1.title {{ direction: rtl; text-align: right; font-size: 1.9rem; font-weight: 7
 .b-up {{ background: {IN_C}; color: #18202D; }}
 .b-dn {{ background: {OUT_C}; color: #18202D; }}
 .b-acc {{ background: rgba(242,181,68,.18); color: {SIG_C}; }}
+.b-warn {{ background: rgba(238,107,94,.16); color: {OUT_C}; }}
 .price {{ font-size: 1.05rem; font-weight: 500; direction: ltr; unicode-bidi: isolate; }}
 .pct {{ font-size: .82rem; font-weight: 700; padding: .12rem .5rem; border-radius: 6px;
         direction: ltr; unicode-bidi: isolate; }}
@@ -344,6 +345,7 @@ def row_html(r):
         sp = r["split"]
         badge = (f"<span class='badge b-acc'>تقسيم عكسي {sp['ratio']} · {sp['date']} · "
                  f"نزل بعده {sp['drop']:.1f}%</span> ") + badge
+    badge = r.get("spy_badge", "") + badge
     cc = lambda x: "up" if x >= 0 else "down"
     side_c = IN_C if r["side"] == "up" else OUT_C
     side_t = "صعود" if r["side"] == "up" else "هبوط"
@@ -466,6 +468,25 @@ def get_results(penny):
     return out
 
 
+def spy_badge(data):
+    """على بطاقة SPY: إشارته التجريبية (زخم + حجم + اتساع) وتحذير الارتداد."""
+    try:
+        s = rc.spy_state(data, list(tickers))
+    except Exception:
+        return ""
+    if not s:
+        return ""
+    out = ""
+    if s["signal"]:
+        word = "صعود" if s["signal"] == "up" else "هبوط"
+        out += f"<span class='badge b-acc'>🧪 إشارة SPY تجريبية: {word}</span> "
+    if s["rev"]:
+        word = "صعوده" if s["rev"]["dir"] == "up" else "نزوله"
+        out += (f"<span class='badge b-warn'>⚠️ احتمال ارتداد بعد {word}: "
+                f"{'، '.join(s['rev']['reasons'])}</span> ")
+    return out
+
+
 def cards():
     penny = mode == MODES[1]
     out = get_results(penny)
@@ -513,6 +534,8 @@ def cards():
     spy = [r for r in results if r["sym"] == rc.MARKET]
     if spy:
         shown = spy + [r for r in shown if r["sym"] != rc.MARKET]
+        if not penny:
+            spy[0]["spy_badge"] = spy_badge(out[2])
     if not shown:
         st.info("ما فيه أسهم تطابق الفلتر الحين. خفّض عدد النقاط المطلوب من الإعدادات أو انتظر.")
     if show_opt and shown and not penny:

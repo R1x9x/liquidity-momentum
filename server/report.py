@@ -54,7 +54,7 @@ def csv_records(state_dir, day):
                 continue
             seen.add(key)
             rec = dict(ts=ts.isoformat(), list=kind, sym=row[1], side=row[2], score=int(row[3]), price=float(row[4]))
-            if kind == "big":
+            if kind in ("big", "spy"):
                 exp = dt.date.fromisoformat(row[8])
                 strike = float(row[7])
                 rec.update(kind=row[6], strike=strike, exp_label=rc.exp_label(exp, ts.date()),
@@ -131,7 +131,7 @@ def outcome(bars, ts, entry, win_pct, stop_pct):
 
 
 def build(recs, day):
-    """يرجع (صفوف العقود، صفوف الأسهم الصغيرة) جاهزة لـ cards.contract_report / penny_report."""
+    """يرجع (صفوف العقود، صفوف الأسهم الصغيرة، صفوف SPY التجريبية) جاهزة لـ cards."""
     a = rc.api()
     d = dt.date.fromisoformat(day)
     start = dt.datetime.combine(d, dt.time(9, 30), NY)
@@ -139,22 +139,24 @@ def build(recs, day):
     # العقود فقط لأسهم سعرها ضمن حدود الأسهم الكبيرة (التنبيهات القديمة بدون سعر نقيس بالسترايك)
     big = [r for r in recs if r["list"] == "big" and r["sym"] == rc.MARKET
            or r["list"] == "big" and rc.BIG_PRICE[0] <= r.get("price", r.get("strike", 0)) <= rc.BIG_PRICE[1]]
+    spy = [r for r in recs if r["list"] == "spy"]
     penny = [r for r in recs if r["list"] == "penny"]
-    obars = _option_bars(a, sorted({r["option"] for r in big}), start, end) if big else {}
+    obars = _option_bars(a, sorted({r["option"] for r in big + spy}), start, end) if big or spy else {}
     sbars = _stock_bars(a, sorted({r["sym"] for r in penny}), start, end) if penny else {}
 
-    crow, prow = [], []
-    for r in big:
+    def contract_row(r):
         ts = dt.datetime.fromisoformat(r["ts"])
         bars = obars.get(r["option"], [])
         high, high_time, close = _after(bars, ts, r["entry"])
-        crow.append(dict(sym=r["sym"], side=r["side"], kind=r["kind"], strike=r["strike"],
-                         exp_label=r["exp_label"], time=clock(ts), entry=r["entry"],
-                         high=high, high_time=high_time, close=close,
-                         result=outcome(bars, ts, r["entry"], cards.WIN_PCT, cards.STOP_PCT)))
+        return dict(sym=r["sym"], side=r["side"], kind=r["kind"], strike=r["strike"],
+                    exp_label=r["exp_label"], time=clock(ts), entry=r["entry"],
+                    high=high, high_time=high_time, close=close,
+                    result=outcome(bars, ts, r["entry"], cards.WIN_PCT, cards.STOP_PCT))
+
+    crow, srow, prow = [contract_row(r) for r in big], [contract_row(r) for r in spy], []
     for r in penny:
         ts = dt.datetime.fromisoformat(r["ts"])
         high, high_time, close = _after(sbars.get(r["sym"], []), ts, r["entry"])
         prow.append(dict(sym=r["sym"], score=r["score"], time=clock(ts), entry=r["entry"],
                          high=high, high_time=high_time, close=close))
-    return crow, prow
+    return crow, prow, srow
