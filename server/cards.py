@@ -117,7 +117,7 @@ def tiles(d, y, items, x0=PAD + 28, x1=W - PAD - 28, h=118):
         d.rounded_rectangle((xr - w, y, xr, y + h), radius=18, fill=TILE)
         ctext(d, xr - w / 2, y + 14, label, F["small"], MUTED)
         sub = sub[0] if sub else None
-        d.text((xr - w / 2, y + 56 + (0 if sub or h <= 118 else (h - 118) / 2)), value, font=F["val"],
+        d.text((xr - w / 2, y + 56 + (0 if sub or h <= 118 else (h - 118) / 2)), ar(value), font=F["val"],
                fill=color or TEXT, anchor="ma")
         if sub:
             ctext(d, xr - w / 2, y + 106, sub, F["small"], MUTED)
@@ -223,8 +223,29 @@ def contract_card(sig, opt, when, trial=False, warning=None):
     return finish(img, footer(d, y, when))
 
 
-def penny_card(sig, split, when):
-    """sig: sym, price, chg, score, checks. split: None or ratio, date, drop."""
+LATE_PM, OFF_HIGH = 1.0, -5  # من اختبار 40 يوم: هنا تكثر الخسارة -10%، فالرقم يتلون أصفر
+
+
+def penny_info(d, y, info):
+    """البعد عن أعلى سعر اليوم + حجم ما قبل الافتتاح + خبر اليوم."""
+    pm = info.get("pm")
+    news = info.get("news") or []
+    off = info.get("off_high", 0)
+    y = tiles(d, y, [("من أعلى سعر اليوم", "عند القمة" if off > -0.5 else f"{off:.1f}%", SIGNAL if off <= OFF_HIGH else None),
+                     ("حجم ما قبل الافتتاح", "—" if pm is None else f"{pm:.1f}x" if pm >= 0.1 else f"{pm:.2f}x",
+                      SIGNAL if pm and pm >= LATE_PM else None, "من يوم عادي"),
+                     ("خبر اليوم", "فيه" if news else "ما فيه", SIGNAL if news else MUTED)], h=150)
+    if news:
+        y += 20
+        head = news[0] if len(news[0]) <= 58 else news[0][:56].rstrip() + "…"
+        d.text((W - PAD - 28, y), head, font=F["small"], fill=MUTED, anchor="ra")
+        y += 36
+    return y + 40
+
+
+def penny_card(sig, split, when, info=None):
+    """sig: sym, price, chg, score, checks. split: None or ratio, date, drop.
+    info: off_high (% عن أعلى سعر اليوم), pm (حجم ما قبل الافتتاح ÷ يوم عادي), news (عناوين اليوم)."""
     img = Image.new("RGB", (W, 2400), BG)
     d = ImageDraw.Draw(img)
 
@@ -237,6 +258,8 @@ def penny_card(sig, split, when):
                [("سهم صغير", SIGNAL, BG), ("صعود", UP, BG)],
                sig["score"], len(sig["checks"]), UP, sub=price_row)
     y += 96
+    if info:
+        y = penny_info(d, y, info)
 
     if split:
         d.rounded_rectangle((PAD, y, W - PAD, y + 132), radius=24, fill=CARD)

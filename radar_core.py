@@ -744,6 +744,34 @@ def split_info(sym, split, daily, intr, rules=PENNY_RULES):
     return dict(ratio=ratio, date=ex.strftime("%m/%d"), drop=(1 - price / first_open) * 100)
 
 
+def penny_extra(sym, daily, intr):
+    """معلومات إضافية لبطاقة السهم الصغير: البعد عن أعلى سعر اليوم، وحجم ما قبل الافتتاح ÷ يوم عادي، وعناوين أخباره اليوم."""
+    a = api()
+    today, past = split_days(intr, daily)
+    out = dict(off_high=0.0, pm=None, news=[])
+    if today is None or today.empty:
+        return out
+    out["off_high"] = (float(today["Close"].iloc[-1]) / float(today["High"].max()) - 1) * 100
+    day = today.index[-1].date()
+    try:
+        raw = a.paged(f"{a.DATA}/v2/stocks/bars", dict(symbols=sym, timeframe="1Min", feed="sip", adjustment="split",
+                      start=dt.datetime.combine(day, dt.time(4), NY).isoformat(),
+                      end=dt.datetime.combine(day, dt.time(9, 30), NY).isoformat(), limit=10000), "bars")
+        avg = float(past["Volume"].tail(20).mean()) if past is not None and len(past) else 0
+        if avg > 0:
+            out["pm"] = sum(b["v"] for b in raw.get(sym, [])) / avg
+    except Exception:
+        pass
+    try:
+        j = a.get(f"{a.DATA}/v1beta1/news", dict(symbols=sym, limit=5,
+                  start=(dt.datetime.combine(day, dt.time(4), NY) - dt.timedelta(hours=12)).isoformat()))
+        # أخبار السهم نفسه، مو أخبار السوق العامة اللي تذكر عشرات الأسهم
+        out["news"] = [n["headline"] for n in j.get("news", []) if len(n.get("symbols", [])) <= 3]
+    except Exception:
+        pass
+    return out
+
+
 def penny_scan(p=PARAMS, mkt=None, rules=PENNY_RULES):
     syms = penny_universe(rules)
     if not syms:

@@ -20,6 +20,9 @@ import report  # noqa: E402
 
 TOKEN = os.environ["TG_TOKEN"]
 CHAT = os.environ["TG_CHAT_ID"]
+# بوت ثاني للأسهم الصغيرة (تنبيهاتها وتقريرها). بدونه تروح للبوت الأساسي
+PENNY_BOT = (os.environ.get("PENNY_TG_TOKEN") or TOKEN, os.environ.get("PENNY_TG_CHAT_ID") or CHAT)
+MAIN_BOT = (TOKEN, CHAT)
 ALERT_MIN = int(os.environ.get("ALERT_MIN_SCORE", "7"))  # العقود
 PENNY_MIN = int(os.environ.get("PENNY_MIN_SCORE", "7"))  # الأسهم الصغيرة لها حد مستقل
 PENNY_ALERTS = os.environ.get("PENNY_ALERTS", "1") == "1"
@@ -35,20 +38,20 @@ def log(*a):
     print(dt.datetime.now(RIYADH).strftime("%Y-%m-%d %H:%M:%S"), *a, flush=True)
 
 
-def send(text):
+def send(text, bot=MAIN_BOT):
     try:
-        r = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                          data={"chat_id": CHAT, "text": text}, timeout=20)
+        r = requests.post(f"https://api.telegram.org/bot{bot[0]}/sendMessage",
+                          data={"chat_id": bot[1], "text": text}, timeout=20)
         if not r.ok:
             log("telegram error", r.status_code, r.text[:200])
     except Exception as e:
         log("telegram exception", e)
 
 
-def send_photo(png, caption):
+def send_photo(png, caption, bot=MAIN_BOT):
     try:
-        r = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendPhoto",
-                          data={"chat_id": CHAT, "caption": caption},
+        r = requests.post(f"https://api.telegram.org/bot{bot[0]}/sendPhoto",
+                          data={"chat_id": bot[1], "caption": caption},
                           files={"photo": ("radar.png", png, "image/png")}, timeout=30)
         if not r.ok:
             log("telegram photo error", r.status_code, r.text[:200])
@@ -138,7 +141,8 @@ def send_reports(day):
         ok = send_photo(cards.contract_report(srow, label, when, title="تقرير SPY التجريبي"),
                         f"🧪 تقرير إشارة SPY التجريبية | نهاية جلسة {label}") and ok
     if PENNY_ALERTS:
-        ok = send_photo(cards.penny_report(prow, label, when), f"📊 تقرير الأسهم الصغيرة | نهاية جلسة {label}") and ok
+        ok = send_photo(cards.penny_report(prow, label, when), f"📊 تقرير الأسهم الصغيرة | نهاية جلسة {label}",
+                        PENNY_BOT) and ok
     return ok
 
 
@@ -229,13 +233,18 @@ def alert_spy(spy, sent, day):
 
 
 def alert_penny(mkt, sent, day):
-    results, _ = rc.penny_scan(mkt=mkt)
+    results, data = rc.penny_scan(mkt=mkt)
     for r in results:
         key = f"{r['sym']}:penny"
         if r["score"] < PENNY_MIN or key in sent:
             continue
         caption = f"🟡 سهم صغير | 🟢 صعود | {r['sym']}"
-        if send_photo(cards.penny_card(r, r["split"], riyadh_time()), caption):
+        try:
+            info = rc.penny_extra(r["sym"], data["daily"].get(r["sym"]), data["intr"].get(r["sym"]))
+        except Exception as e:
+            log("penny extra error", r["sym"], e)
+            info = None
+        if send_photo(cards.penny_card(r, r["split"], riyadh_time(), info), caption, PENNY_BOT):
             after_send(day, sent, key, r, None, "penny")
             log("penny alert", key, r["score"])
     return len(results)
@@ -252,7 +261,11 @@ def main():
     send(f"✅ الرادار شغال على السيرفر ببيانات Alpaca اللحظية\n"
          f"يفحص {len(tickers)} سهم كل دقيقة وقت السوق، وينبهك عند {ALERT_MIN}/10 أو أكثر مع عقد مطابق."
          + ("\nوإشارة SPY التجريبية (زخم + حجم + اتساع السوق) من 6 المغرب إلى 11 الليل." if SPY_ALERTS else "")
-         + (f"\nوالأسهم الصغيرة (1 إلى 5 دولار): صعود فقط عند {PENNY_MIN}/10 أو أكثر." if PENNY_ALERTS else ""))
+         + (f"\nوالأسهم الصغيرة (1 إلى 5 دولار): صعود فقط عند {PENNY_MIN}/10 أو أكثر"
+            + (" — تجيك في بوت الأسهم." if PENNY_BOT != MAIN_BOT else "." ) if PENNY_ALERTS else ""))
+    if PENNY_ALERTS and PENNY_BOT != MAIN_BOT:
+        send(f"✅ بوت الأسهم الصغيرة شغال\nتجيك هنا تنبيهات الأسهم من 1 إلى 5 دولار (صعود عند {PENNY_MIN}/10 أو أكثر)"
+             f" وتقريرها آخر الجلسة. تنبيهات العقود وتقريرها تبقى في البوت الأساسي.", PENNY_BOT)
     while True:
         try:
             now_ny = dt.datetime.now(NY)
