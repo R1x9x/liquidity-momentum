@@ -148,7 +148,7 @@ with st.sidebar:
     rvol_min = st.slider("أقل حجم مقابل المعتاد (RVOL)", 1.0, 5.0, 2.0, 0.1)
     in_min = st.slider("سيولة داخلة قوية من %", 50, 90, 65)
     out_max = st.slider("سيولة خارجة قوية تحت %", 10, 50, 35)
-    near_pct = st.slider("قرب متوسط 20 يوم (%)", 0.2, 3.0, 1.0, 0.1)
+    near_pct = st.slider("قرب المتوسط (%)", 0.2, 3.0, 1.0, 0.1)
     atr_mult = st.slider("أقل حركة مقابل الحركة الطبيعية (ATR)", 0.2, 1.5, 0.5, 0.1)
     rs_min = st.slider("أقوى/أضعف من السوق بـ %", 0.0, 3.0, 1.0, 0.1)
     min_touch = st.slider("أقل عدد لمسات لخط الترند", 2, 4, 3)
@@ -160,10 +160,10 @@ with st.sidebar:
              min_score=min_score, min_touch=min_touch)
     opt_rules, opt_dte, opt_min_oi = None, (5, 21), 100
     if PUBLIC:
-        show_opt, opt_budget = False, (100, 400)
+        show_opt, opt_budget = False, rc.OPT_RULES["budget"]
     else:
         show_opt = st.toggle("عرض أفضل عقد أوبشن", value=True)
-        opt_budget = st.slider("سعر العقد ($)", 50, 800, (100, 400), 10)
+        opt_budget = st.slider("سعر العقد ($)", 50, 800, rc.OPT_RULES["budget"], 10)
         if LIVE:
             opt_spread = st.slider("أقصى فرق بين العرض والطلب (%)", 1, 15, 5)
             opt_delta = st.slider("الدلتا", 0.10, 0.90, (0.30, 0.50), 0.05)
@@ -379,14 +379,14 @@ def row_html(r):
 </div>"""
 
 
-def detail_chart(intr, sma):
+def detail_chart(intr, sma, sma_name):
     d, _ = split_days(intr, intr)
     mf = money_flow(d)
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25],
                         vertical_spacing=0.04)
     fig.add_trace(go.Scatter(x=d.index, y=d["Close"], name="السعر", line=dict(color="#E6EAF0", width=1.6)), 1, 1)
     fig.add_trace(go.Scatter(x=d.index, y=vwap_of(d), name="VWAP", line=dict(color=SIG_C, width=1, dash="dot")), 1, 1)
-    fig.add_trace(go.Scatter(x=[d.index[0], d.index[-1]], y=[sma, sma], name="متوسط 20 يوم",
+    fig.add_trace(go.Scatter(x=[d.index[0], d.index[-1]], y=[sma, sma], name=sma_name,
                              line=dict(color="#7FA7E8", width=1.2, dash="dash")), 1, 1)
     fig.add_trace(go.Bar(x=d.index, y=mf, name="السيولة كل دقيقة",
                          marker_color=np.where(mf >= 0, IN_C, OUT_C)), 2, 1)
@@ -401,7 +401,7 @@ def detail_chart(intr, sma):
     return fig
 
 
-def daily_chart(daily, intr):
+def daily_chart(daily, intr, sma_len):
     today, past = split_days(intr, daily)
     d = past.tail(120)[["Open", "High", "Low", "Close"]].copy()
     ts = pd.Timestamp(today.index[-1].date())
@@ -411,8 +411,8 @@ def daily_chart(daily, intr):
                                                    today["Low"].min(), today["Close"].iloc[-1]]
     fig = go.Figure(go.Candlestick(x=d.index, open=d["Open"], high=d["High"], low=d["Low"], close=d["Close"],
                                    increasing_line_color=IN_C, decreasing_line_color=OUT_C, name="السعر"))
-    sma = d["Close"].rolling(20).mean()
-    fig.add_trace(go.Scatter(x=d.index, y=sma, name="متوسط 20 يوم", line=dict(color="#7FA7E8", width=1.3)))
+    sma = d["Close"].rolling(sma_len).mean()
+    fig.add_trace(go.Scatter(x=d.index, y=sma, name=rc.sma_label(sma_len), line=dict(color="#7FA7E8", width=1.3)))
     fig.update_layout(height=460, margin=dict(l=10, r=10, t=10, b=10), showlegend=False,
                       paper_bgcolor="#000000", plot_bgcolor="#000000", font=dict(color="#E6EAF0"),
                       xaxis_rangeslider_visible=False)
@@ -572,8 +572,9 @@ def details():
     pick_sym = st.selectbox("اختر السهم", options, key=f"pick_{penny}")
     sel = next((r for r in results if r["sym"] == pick_sym), None)
     if sel and pick_sym in frames:
-        st.plotly_chart(detail_chart(frames[pick_sym], sel["sma"]), width="stretch")
-        st.markdown(f"<div class='sub'>فوق: السعر وVWAP (منقط أصفر) ومتوسط 20 يوم (متقطع أزرق). "
+        sma_name = rc.sma_label(sel["sma_len"])
+        st.plotly_chart(detail_chart(frames[pick_sym], sel["sma"], sma_name), width="stretch")
+        st.markdown(f"<div class='sub'>فوق: السعر وVWAP (منقط أصفر) و{sma_name} (متقطع أزرق). "
                     f"وسط: السيولة كل دقيقة (<span style='color:{IN_C}'>داخلة</span> / "
                     f"<span style='color:{OUT_C}'>خارجة</span>). تحت: صافي السيولة من بداية اليوم.</div>",
                     unsafe_allow_html=True)
@@ -586,8 +587,8 @@ def details():
             st.markdown("<div class='sub'>شارت TradingView بأسعار لحظية. تقدر تغيّر الفريم وتضيف مؤشرات من داخله.</div>",
                         unsafe_allow_html=True)
         elif frame == "يومي":
-            st.plotly_chart(daily_chart(dailies[pick_sym], frames[pick_sym]), width="stretch")
-            st.markdown("<div class='sub'>الخط الأزرق متوسط 20 يوم.</div>", unsafe_allow_html=True)
+            st.plotly_chart(daily_chart(dailies[pick_sym], frames[pick_sym], sel["sma_len"]), width="stretch")
+            st.markdown(f"<div class='sub'>الخط الأزرق {sma_name}.</div>", unsafe_allow_html=True)
         else:
             name = "15د" if frame == "15 دقيقة" else "ساعة"
             bars = data["b15" if name == "15د" else "b60"].get(pick_sym)
@@ -619,7 +620,7 @@ sort_by = c1.selectbox("الترتيب حسب", ["قوة الإشارة", "صا�
 only_sig = c2.toggle("الإشارات والتجميع فقط", value=False)
 only_top = c3.toggle(f"الأقوى ({min_score}+ نقاط)", value=False,
                      help=f"يعرض الأسهم اللي حققت {min_score} نقاط أو أكثر، صعود أو هبوط، "
-                          "حتى لو ما تحقق فيها شرط السيولة أو متوسط 20 يوم")
+                          "حتى لو ما تحقق فيها شرط السيولة أو المتوسط")
 sort_key = {"قوة الإشارة": "score", "صافي السيولة اليوم": "net_day", "نسبة السيولة الداخلة": "in_pct",
             "الزخم": "mom", "الحجم مقابل المعتاد": "rvol"}[sort_by]
 

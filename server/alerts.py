@@ -23,7 +23,7 @@ CHAT = os.environ["TG_CHAT_ID"]
 # بوت ثاني للأسهم الصغيرة (تنبيهاتها وتقريرها). بدونه تروح للبوت الأساسي
 PENNY_BOT = (os.environ.get("PENNY_TG_TOKEN") or TOKEN, os.environ.get("PENNY_TG_CHAT_ID") or CHAT)
 MAIN_BOT = (TOKEN, CHAT)
-ALERT_MIN = int(os.environ.get("ALERT_MIN_SCORE", "7"))  # العقود
+ALERT_MIN = int(os.environ.get("CONTRACT_MIN_SCORE", "7"))  # العقود
 PENNY_MIN = int(os.environ.get("PENNY_MIN_SCORE", "7"))  # الأسهم الصغيرة لها حد مستقل
 PENNY_ALERTS = os.environ.get("PENNY_ALERTS", "1") == "1"
 SPY_ALERTS = os.environ.get("SPY_ALERTS", "1") == "1"  # إشارة SPY التجريبية (زخم + حجم + اتساع السوق)
@@ -109,7 +109,7 @@ def remember(day, r, opt, kind):
     """يحفظ التنبيه لتقرير نهاية الجلسة (سعر العقد = سعر الطلب وقت التنبيه)."""
     rec = dict(ts=dt.datetime.now(NY).isoformat(), list=kind, sym=r["sym"], side=r["side"], score=int(r["score"]),
                price=round(float(r["price"]), 4))
-    rec.update(details(r, PENNY_MIN if kind == "penny" else ALERT_MIN))
+    rec.update(details(r, PENNY_MIN if kind == "penny" else ALERT_MIN), zone=r.get("zone"))
     if opt:
         rec.update(kind=opt["kind"], strike=float(opt["strike"]), exp_label=opt["exp_label"],
                    option=opt["symbol"], entry=float(opt["ask"]),
@@ -197,14 +197,22 @@ def alert_big(tickers, sent, day):
         # SPY له إشارة خاصة (alert_spy)، النقاط العشر ما تناسبه
         if r["sym"] == rc.MARKET or r["score"] < ALERT_MIN or key in sent or not rc.big_price_ok(r):
             continue
+        try:
+            r["zone"] = rc.stock_zone(r["sym"], r["side"], data["intr"].get(r["sym"]), data["daily"].get(r["sym"]))
+        except Exception as e:
+            log("zone error", key, e)
+            continue
+        if not r["zone"]:
+            continue  # بدون تأكيد من مناطق السيولة ما فيه تنبيه (ونرجع نشيك الدقيقة الجاية)
         kind = "call" if r["side"] == "up" else "put"
         opt, why = rc.best_option(r["sym"], kind, r["price"])
         if not opt:
             continue  # بدون عقد مطابق ما فيه تنبيه (ونرجع نشيك الدقيقة الجاية)
+        zone_text = rc.ZONE_TEXT[(r["side"], r["zone"])]
         caption = (f"{'🟢 صعود' if kind == 'call' else '🔴 هبوط'} | {r['sym']} | "
-                   f"{kind.upper()} ${opt['strike']:g} | {opt['exp_label']}")
+                   f"{kind.upper()} ${opt['strike']:g} | {opt['exp_label']}\n{zone_text}")
         # تحذير الارتداد على SPY بس: اختبار 58 يوم ما لقى إنه يقلل خسائر عقود الشركات
-        if send_photo(cards.contract_card(r, opt, riyadh_time()), caption):
+        if send_photo(cards.contract_card(dict(r, zone_text=zone_text), opt, riyadh_time()), caption):
             after_send(day, sent, key, r, opt, "big")
             log("alert", key, r["score"], opt["symbol"])
     return mkt, len(results), spy
@@ -218,7 +226,8 @@ def alert_spy(spy, sent, day):
     if key in sent:
         return
     kind = "call" if spy["signal"] == "up" else "put"
-    opt, why = rc.best_option(rc.MARKET, kind, spy["price"])
+    # الإشارة التجريبية تبقى على مدى تكلفتها، وسقف الشركات في rc.OPT_RULES
+    opt, why = rc.best_option(rc.MARKET, kind, spy["price"], dict(rc.OPT_RULES, budget=(100, 400)))
     if not opt:
         return
     sig = dict(spy, side=spy["signal"])

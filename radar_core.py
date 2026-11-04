@@ -31,14 +31,14 @@ def big_price_ok(r):
 
 # الإعدادات الافتراضية للنقاط العشر (الموقع يقدر يغيرها من الإعدادات)
 PARAMS = dict(flow_len=10, rvol_min=2.0, spike_min=3.0, in_min=65, out_max=35, near_pct=1.0,
-              near_tl=0.4, atr_mult=0.5, rs_min=1.0, mom_min=0.5, min_score=7, min_touch=3)
+              near_tl=0.4, atr_mult=0.5, rs_min=1.0, mom_min=0.5, min_score=7, min_touch=3, sma_len=8)
 
 # شروط العقد: يومي أو أقرب أسبوعي، تكلفته (سعر الطلب × 100) ضمن الميزانية، فرق ضيق، ودلتا متوسطة
-OPT_RULES = dict(budget=(100, 400), max_spread=0.05, delta=(0.30, 0.50), min_liq=100,
+OPT_RULES = dict(budget=(150, 250), max_spread=0.05, delta=(0.30, 0.50), min_liq=100,
                  max_days=7, last_0dte=(15, 0))
 
 # الأسهم الصغيرة: السعر، وتقسيم عكسي صار قبل أسبوع إلى أسبوعين وما ارتد السهم بعده أكثر من 10%
-PENNY_RULES = dict(price=(1.0, 5.0), split_age=(7, 14), rebound_max=0.10, max_symbols=60)
+PENNY_RULES = dict(price=(1.0, 5.0), split_age=(7, 14), rebound_max=0.10, max_symbols=60, sma_len=20)
 
 
 # ---------------- المفاتيح ومصدر البيانات ----------------
@@ -136,14 +136,14 @@ class Alpaca:
         return self.cached("sessions", 3600, f)
 
 
-def _frame(rows, daily=False):
+def _frame(rows, daily=False, rth=True):
     d = pd.DataFrame(rows)
     d.index = pd.to_datetime(d["t"], utc=True).dt.tz_convert(NY)
     d = d.rename(columns={"o": "Open", "h": "High", "l": "Low", "c": "Close", "v": "Volume"})
     d = d[["Open", "High", "Low", "Close", "Volume"]].astype(float)
     if daily:
         d.index = d.index.tz_localize(None).normalize()
-    else:
+    elif rth:
         mins = d.index.hour * 60 + d.index.minute
         d = d[(mins >= 570) & (mins < 960)]  # وقت السوق الرسمي فقط 9:30–16:00
     d.index.name = None
@@ -327,6 +327,10 @@ def completed(bars, minutes, now_ts):
     return cb if len(cb) else None
 
 
+def sma_label(n):
+    return f"متوسط {n} {'أيام' if n <= 10 else 'يوم'}"
+
+
 def analyze(sym, intr, daily, mkt, b15, b60, p=PARAMS, side=None):
     """side=None يختار الأقوى من الصعود والهبوط، و side='up' يحسب الصعود فقط (الأسهم الصغيرة)."""
     today, past = split_days(intr, daily)
@@ -357,10 +361,12 @@ def analyze(sym, intr, daily, mkt, b15, b60, p=PARAMS, side=None):
     mom = (price / ref - 1) * 100
     vwap = float(vwap_of(today).iloc[-1])
 
-    # متوسط 20 يوم (قبل اليوم وباحتساب السعر الحالي)
+    # المتوسط (قبل اليوم وباحتساب السعر الحالي): 8 أيام للأسهم الكبيرة و20 يوم للأسهم الصغيرة
     closes = past["Close"]
-    sma_prev = float(closes.tail(20).mean())
-    sma_live = float((closes.tail(19).sum() + price) / 20)
+    sma_len = p.get("sma_len", PARAMS["sma_len"])
+    sma_name = sma_label(sma_len)
+    sma_prev = float(closes.tail(sma_len).mean())
+    sma_live = float((closes.tail(sma_len - 1).sum() + price) / sma_len)
     dist = (price / sma_live - 1) * 100
     cross_up = prev_close < sma_prev and price > sma_live
     near_up = price <= sma_live and -dist <= p["near_pct"] and mom > 0
@@ -414,7 +420,7 @@ def analyze(sym, intr, daily, mkt, b15, b60, p=PARAMS, side=None):
 
     bull = [
         ("سيولة داخلة قوية", in_pct >= p["in_min"], f"{in_pct:.0f}%"),
-        ("اختراق متوسط 20 يوم", cross_up or near_up, ma_detail(cross_up, near_up, "اخترق")),
+        (f"اختراق {sma_name}", cross_up or near_up, ma_detail(cross_up, near_up, "اخترق")),
         ("حجم غير معتاد", rvol >= p["rvol_min"], f"{rvol:.1f}x"),
         ("فوق VWAP", price > vwap, ""),
         ("زخم صاعد", mom >= p["mom_min"], f"{mom:+.2f}%"),
@@ -425,7 +431,7 @@ def analyze(sym, intr, daily, mkt, b15, b60, p=PARAMS, side=None):
            trend_detail(tl[n]["res"], tl[n]["up_x"], tl[n]["up_n"], "اخترق")) for n in ("15د", "ساعة")]
     bear = [
         ("سيولة خارجة قوية", in_pct <= p["out_max"], f"{100 - in_pct:.0f}%"),
-        ("كسر متوسط 20 يوم", cross_dn or near_dn, ma_detail(cross_dn, near_dn, "كسر")),
+        (f"كسر {sma_name}", cross_dn or near_dn, ma_detail(cross_dn, near_dn, "كسر")),
         ("حجم غير معتاد", rvol >= p["rvol_min"], f"{rvol:.1f}x"),
         ("تحت VWAP", price < vwap, ""),
         ("زخم هابط", mom <= -p["mom_min"], f"{mom:+.2f}%"),
@@ -445,7 +451,7 @@ def analyze(sym, intr, daily, mkt, b15, b60, p=PARAMS, side=None):
     status = side if strong else ("acc" if accum else "")
 
     return dict(sym=sym, price=price, chg=chg, rvol=rvol, in_pct=in_pct,
-                net_day=mf.sum(), mom=mom, sma=sma_live, vwap=vwap, tl=tl, side=side, score=score,
+                net_day=mf.sum(), mom=mom, sma=sma_live, sma_len=sma_len, vwap=vwap, tl=tl, side=side, score=score,
                 checks=checks, status=status, unusual=rvol >= p["rvol_min"],
                 last=today.index[-1])
 
@@ -463,6 +469,62 @@ def scan(data, tks, p=PARAMS, side=None, mkt=None):
         if r:
             out.append(r)
     return out, mkt
+
+
+# ---------------- مناطق السيولة في شارت السهم ----------------
+# مستويات انتداول عندها حجم كبير آخر 5 جلسات: منطقة شراء إذا أغلب التدفق داخل، ومنطقة بيع إذا أغلبه خارج
+ZONE_RULES = dict(days=5, bin=0.0025, span=0.05, heavy=1.5, buy=0.55, sell=0.45, touch=0.001, near=0.005, look=15)
+ZONE_TEXT = {("up", "bounce"): "ارتداد من منطقة شراء", ("up", "break"): "اختراق منطقة بيع",
+             ("dn", "bounce"): "رفض من منطقة بيع", ("dn", "break"): "كسر منطقة شراء"}
+
+
+def liquidity_zones(bars, ref, price, rules=ZONE_RULES):
+    """يرجع (مناطق الشراء، مناطق البيع)، كل منطقة (من، إلى). ref = إغلاق أمس (يثبت حدود المناطق خلال اليوم)."""
+    w = ref * rules["bin"]
+    flow = money_flow(bars).to_numpy(float)
+    g = pd.DataFrame(dict(level=np.floor(bars["Close"].to_numpy(float) / w).astype(int), vol=bars["Volume"].to_numpy(float),
+                          inflow=np.where(flow > 0, flow, 0), outflow=np.where(flow < 0, -flow, 0))).groupby("level").sum()
+    g = g[(g.index * w > price * (1 - rules["span"])) & (g.index * w < price * (1 + rules["span"]))]
+    if len(g) < 5:
+        return [], []
+    heavy = g[g["vol"] >= g["vol"].median() * rules["heavy"]]
+    share = heavy["inflow"] / (heavy["inflow"] + heavy["outflow"] + 1e-9)
+    return ([(k * w, (k + 1) * w) for k in heavy.index[share >= rules["buy"]]],
+            [(k * w, (k + 1) * w) for k in heavy.index[share <= rules["sell"]]])
+
+
+def zone_signal(today, side, buy, sell, rules=ZONE_RULES):
+    """bounce = ارتداد من المنطقة، break = اختراق أو كسر مؤكد، None = ما فيه تأكيد."""
+    c, n = today["Close"].to_numpy(float), rules["look"]
+    if len(c) < n + 1:
+        return None
+    price, before = c[-1], c[-n - 1]
+    low, high = float(today["Low"].tail(n).min()), float(today["High"].tail(n).max())
+    if side == "up":
+        if any(low <= z[1] * (1 + rules["touch"]) and z[1] < price <= z[1] * (1 + rules["near"]) for z in buy):
+            return "bounce"
+        return "break" if any(before < z[0] and price > z[1] for z in sell) else None
+    if any(high >= z[0] * (1 - rules["touch"]) and z[0] * (1 - rules["near"]) <= price < z[0] for z in sell):
+        return "bounce"
+    return "break" if any(before > z[1] and price < z[0] for z in buy) else None
+
+
+def stock_zone(sym, side, intr, daily, rules=ZONE_RULES):
+    """تأكيد مناطق السيولة للسهم الحين. المناطق تتحدث كل 15 دقيقة."""
+    a = api()
+    today, past = split_days(intr, daily)
+    if today is None or past is None or today.empty:
+        return None
+    day, now = today.index[-1].date(), today.index[-1]
+
+    def zones():
+        start = dt.datetime.combine([d for d in a.sessions() if d < day][-rules["days"]], dt.time(9, 30), NY)
+        hist = a.cached(("zone_bars", sym, day), 3600, lambda: a.bars(
+            [sym], "1Min", start, dt.datetime.combine(day, dt.time(9, 30), NY)).get(sym))
+        bars = today if hist is None else pd.concat([hist, today])
+        return liquidity_zones(bars, float(past["Close"].iloc[-1]), float(today["Close"].iloc[-1]), rules)
+    buy, sell = a.cached(("zones", sym, now.floor("15min")), 900, zones)
+    return zone_signal(today, side, buy, sell, rules)
 
 
 # ---------------- SPY: إشارة خاصة (تجريبية) وتحذير الارتداد ----------------
@@ -588,11 +650,11 @@ def bs_greeks(kind, S, K, T, mid, r=0.04):
     return dict(delta=delta, gamma=gamma, theta=theta, iv=v)
 
 
-def best_option(sym, kind, price, rules=OPT_RULES, now=None):
-    """أفضل عقد حسب شروطنا. يرجع (العقد، السبب): ok / error / no_exp / no_match"""
+def option_candidates(sym, kind, price, rules=OPT_RULES, now=None):
+    """كل العقود المطابقة لشروطنا في أقرب انتهاء، الأفضل أولاً. يرجع (العقود، السبب): ok / error / no_exp / no_match"""
     a = api()
     if a is None:
-        return None, "error"
+        return [], "error"
     now = now or dt.datetime.now(NY)
     today = now.date()
     late = (now.hour, now.minute) >= rules["last_0dte"]
@@ -605,7 +667,7 @@ def best_option(sym, kind, price, rules=OPT_RULES, now=None):
                  strike_price_gte=f"{price * 0.85:.2f}", strike_price_lte=f"{price * 1.15:.2f}"),
             "option_contracts").get("_list", []))
     except Exception:
-        return None, "error"
+        return [], "error"
     by_exp = {}
     for c in contracts:
         e = dt.date.fromisoformat(c["expiration_date"])
@@ -613,7 +675,7 @@ def best_option(sym, kind, price, rules=OPT_RULES, now=None):
             continue  # العقد اليومي بعد الساعة 3 العصر: الثيتا قاتلة
         by_exp.setdefault(e, []).append(c)
     if not by_exp:
-        return None, "no_exp"
+        return [], "no_exp"
     lo, hi = rules["budget"]
     for e in sorted(by_exp):
         cs = by_exp[e]
@@ -624,8 +686,8 @@ def best_option(sym, kind, price, rules=OPT_RULES, now=None):
                 snaps.update(a.paged(f"{a.DATA}/v1beta1/options/snapshots",
                                      dict(symbols=syms, feed="opra", limit=1000), "snapshots"))
         except Exception:
-            return None, "error"
-        best = None
+            return [], "error"
+        found = []
         for c in cs:
             s = snaps.get(c["symbol"]) or {}
             q, g = s.get("latestQuote") or {}, s.get("greeks") or {}
@@ -652,15 +714,127 @@ def best_option(sym, kind, price, rules=OPT_RULES, now=None):
                 continue
             # الأضيق فرق أولاً، بعدها الأعلى غاما، بعدها الأقل خسارة من الثيتا نسبةً لسعره
             rank = (round(spread, 2), -gamma, abs(theta) / mid)
-            if best is None or rank < best[0]:
-                best = (rank, dict(kind=kind, strike=float(c["strike_price"]), exp=e, today=e == today,
-                                   exp_label=exp_label(e, today), dte=(e - today).days,
-                                   bid=bid, ask=ask, spread=spread * 100, cost=cost, volume=vol, oi=oi,
-                                   delta=g.get("delta", 0), gamma=gamma, theta=theta,
-                                   iv=float(s.get("impliedVolatility") or 0) * 100, symbol=c["symbol"]))
-        if best:
-            return best[1], "ok"
-    return None, "no_match"
+            found.append((rank, dict(kind=kind, strike=float(c["strike_price"]), exp=e, today=e == today,
+                                     exp_label=exp_label(e, today), dte=(e - today).days,
+                                     bid=bid, ask=ask, spread=spread * 100, cost=cost, volume=vol, oi=oi,
+                                     delta=g.get("delta", 0), gamma=gamma, theta=theta,
+                                     iv=float(s.get("impliedVolatility") or 0) * 100, symbol=c["symbol"])))
+        if found:
+            return [o for _, o in sorted(found, key=lambda x: x[0])], "ok"
+    return [], "no_match"
+
+
+def best_option(sym, kind, price, rules=OPT_RULES, now=None):
+    """أفضل عقد حسب شروطنا. يرجع (العقد، السبب): ok / error / no_exp / no_match"""
+    found, why = option_candidates(sym, kind, price, rules, now)
+    return (found[0], "ok") if found else (None, why)
+
+
+# ---------------- شارت العقد نفسه ----------------
+# في الكول والبوت كليهما نشتري العقد، فشارت العقد لازم يكون صاعد، والعكس في اتجاه السهم بس
+CHART_RULES = dict(history_days=8, min_bars=31, div_recent=6, div_span=30, div_pivot=2, fvg_age=8, start=(9, 45), end=(15, 0))
+
+
+def contract_bars(symbols, now=None, rules=CHART_RULES):
+    """شموع 15 دقيقة المكتملة لكل عقد: {الرمز: DataFrame}"""
+    a = api()
+    now = now or dt.datetime.now(NY)
+    start = dt.datetime.combine(now.date() - dt.timedelta(days=rules["history_days"]), dt.time(9, 30), NY)
+    out = {}
+    for i in range(0, len(symbols), 100):
+        raw = a.paged(f"{a.DATA}/v1beta1/options/bars",
+                      dict(symbols=",".join(symbols[i:i + 100]), timeframe="15Min", limit=10000,
+                           start=start.isoformat(), end=now.isoformat()), "bars")
+        for sym, rows in raw.items():
+            cb = completed(_frame(rows, rth=False), 15, pd.Timestamp(now)) if rows else None
+            if cb is not None:
+                out[sym] = cb
+    return out
+
+
+def rsi_of(close, n=14):
+    d = np.diff(close, prepend=close[0])
+    up = pd.Series(np.where(d > 0, d, 0.0)).ewm(alpha=1 / n, adjust=False).mean().to_numpy()
+    dn = pd.Series(np.where(d < 0, -d, 0.0)).ewm(alpha=1 / n, adjust=False).mean().to_numpy()
+    return 100 - 100 / (1 + up / np.maximum(dn, 1e-9))
+
+
+def bull_divergence(cb, rules=CHART_RULES):
+    """دايفيرجنس إيجابي: قاع أدنى في السعر مع قاع أعلى في RSI، وآخر قاع قريب."""
+    d = cb.tail(80)
+    r, low, n, k = rsi_of(d["Close"].to_numpy(float)), d["Low"].to_numpy(float), len(d), rules["div_pivot"]
+    piv = [i for i in range(max(k, n - rules["div_span"] - rules["div_recent"]), n - k)
+           if low[i] == low[i - k:i + k + 1].min()]
+    if len(piv) < 2 or n - 1 - piv[-1] > rules["div_recent"]:
+        return False
+    for p in reversed(piv[:-1]):
+        if piv[-1] - p >= 4:
+            return bool(low[piv[-1]] < low[p] and r[piv[-1]] > r[p])
+    return False
+
+
+def bull_fvg(cb, price, rules=CHART_RULES):
+    """فير فاليو قاب صاعد: فجوة بين ثلاث شموع لسا ما انسدت، والسعر فوقها."""
+    d = cb.tail(rules["fvg_age"] + 3)
+    h, l = d["High"].to_numpy(float), d["Low"].to_numpy(float)
+    return any(h[i - 2] < l[i] and l[i:].min() > h[i - 2] and price > h[i - 2] for i in range(len(d) - 1, 1, -1))
+
+
+def trend_broke_today(cb, p=PARAMS):
+    """هل سكرت شمعة 15 دقيقة اليوم فوق ترند هابط صالح؟"""
+    day = cb.index[-1].date()
+    for i in range(len(cb) - 1, 0, -1):
+        if cb.index[i].date() != day:
+            return False
+        res = find_trendline(cb.iloc[:i], "res")
+        if (res and res["touches"] >= p["min_touch"] and float(cb["Close"].iloc[i]) > res["val"]
+                and float(cb["Close"].iloc[i - 1]) <= res["prev_val"]):
+            return True
+    return False
+
+
+def contract_checks(cb, price):
+    """الشروط الثلاثة الإجبارية على شارت العقد."""
+    return [("كسر ترند هابط 15د", trend_broke_today(cb), ""),
+            ("دايفيرجنس إيجابي", bull_divergence(cb), ""),
+            ("فير فاليو قاب صاعد", bull_fvg(cb, price), "")]
+
+
+def stock_side(intr):
+    """اتجاه السهم الحين: up فوق VWAP وزخم 10 دقائق موجب، dn العكس، وإلا None."""
+    if intr is None or len(intr) < 11:
+        return None
+    today = intr[intr.index.date == intr.index[-1].date()]
+    if len(today) < 11:
+        return None
+    price, vwap = float(today["Close"].iloc[-1]), float(vwap_of(today).iloc[-1])
+    mom = price / float(today["Close"].iloc[-11]) - 1
+    return "up" if price > vwap and mom > 0 else "dn" if price < vwap and mom < 0 else None
+
+
+def contract_scan(data, tickers, now=None, rules=CHART_RULES):
+    """لكل سهم اتجاهه واضح: العقود المطابقة، ثم شارت كل عقد. يرجع [(السهم، الاتجاه، السعر، العقد، الشروط، الشروط الثلاثة متحققة)]."""
+    now = now or dt.datetime.now(NY)
+    picks = []
+    for s in tickers:
+        intr = data["intr"].get(s)
+        side = stock_side(intr)
+        if s == MARKET or not side:
+            continue
+        price = float(intr["Close"].iloc[-1])
+        if not BIG_PRICE[0] <= price <= BIG_PRICE[1]:
+            continue
+        cands, _ = option_candidates(s, "call" if side == "up" else "put", price, now=now)
+        picks += [(s, side, price, o) for o in cands]
+    bars = contract_bars([o["symbol"] for *_, o in picks], now, rules) if picks else {}
+    out = []
+    for s, side, price, o in picks:
+        cb = bars.get(o["symbol"])
+        if cb is None or len(cb) < rules["min_bars"]:
+            continue
+        checks = contract_checks(cb, (o["bid"] + o["ask"]) / 2)
+        out.append(dict(sym=s, side=side, price=price, opt=o, checks=checks, ok=all(c[1] for c in checks)))
+    return out
 
 
 # ---------------- الأسهم الصغيرة ----------------
@@ -777,7 +951,7 @@ def penny_scan(p=PARAMS, mkt=None, rules=PENNY_RULES):
     if not syms:
         return [], {}
     data = load_alpaca(syms + [MARKET])
-    res, _ = scan(data, syms, p, side="up", mkt=mkt)
+    res, _ = scan(data, syms, dict(p, sma_len=rules["sma_len"]), side="up", mkt=mkt)
     lo, hi = rules["price"]
     res = [r for r in res if lo <= r["price"] <= hi]
     splits = reverse_splits([r["sym"] for r in res], rules)

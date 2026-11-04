@@ -205,6 +205,8 @@ def contract_card(sig, opt, when, trial=False, warning=None):
     badges = [("صعود" if up else "هبوط", color, BG)]
     if trial:
         badges.append(("تجريبي · لا تتداول عليه", SIGNAL, BG))
+    if sig.get("zone_text"):
+        badges.append((sig["zone_text"], SIGNAL, BG))
     y = header(img, d, brand(img), sig["sym"], badges, sig["score"], len(sig["checks"]), color)
 
     # contract box
@@ -487,7 +489,7 @@ if __name__ == "__main__":
     out = sys.argv[1] if len(sys.argv) > 1 else "."
     up_checks = [
         ("سيولة داخلة قوية", True, "72%"),
-        ("اختراق متوسط 20 يوم", True, "اخترق اليوم"),
+        ("اختراق متوسط 8 أيام", True, "اخترق اليوم"),
         ("حجم غير معتاد", True, "2.4x"),
         ("فوق VWAP", True, ""),
         ("زخم صاعد", True, "+0.85%"),
@@ -497,7 +499,7 @@ if __name__ == "__main__":
         ("اختراق ترند هابط 15د", False, "باقي 0.4%"),
         ("اختراق ترند هابط ساعة", False, "باقي 1.1%"),
     ]
-    sig = dict(sym="TSLA", side="up", score=8, checks=up_checks)
+    sig = dict(sym="TSLA", side="up", score=8, checks=up_checks, zone_text="اختراق منطقة بيع")
     opt = dict(kind="call", strike=415, exp_label="ينتهي اليوم", today=True, bid=1.48, ask=1.52,
                spread=2.6, cost=150, volume=4820, oi=12350, delta=0.42, gamma=0.085, theta=-0.31)
     open(os.path.join(out, "card-contract.png"), "wb").write(contract_card(sig, opt, "10:45 م"))
