@@ -23,6 +23,7 @@ CHAT = os.environ["TG_CHAT_ID"]
 # بوت ثاني للأسهم الصغيرة (تنبيهاتها وتقريرها). بدونه تروح للبوت الأساسي
 PENNY_BOT = (os.environ.get("PENNY_TG_TOKEN") or TOKEN, os.environ.get("PENNY_TG_CHAT_ID") or CHAT)
 MAIN_BOT = (TOKEN, CHAT)
+SPX_BOT = PENNY_BOT  # البوت الثاني صار خاص بعقود SPX (تنبيهاتها وتقريرها)
 ALERT_MIN = int(os.environ.get("CONTRACT_MIN_SCORE", "7"))  # العقود
 PENNY_MIN = int(os.environ.get("PENNY_MIN_SCORE", "7"))  # الأسهم الصغيرة لها حد مستقل
 # بوت الأسهم الصغيرة موقف حالياً بطلب المستخدم. اسم جديد عشان PENNY_ALERTS=1 القديم في .env السيرفر ما يشغله
@@ -146,7 +147,7 @@ def send_reports(day):
     xrow, missed = report.build_spx(report.records(STATE_DIR, day), day)
     if xrow or missed:  # يطلع بس في الأيام اللي جا فيها تنبيه SPX
         ok = send_photo(cards.contract_report(xrow, label, when, title="تقرير SPX"),
-                        f"📊 تقرير SPX | نهاية جلسة {label}\nأوامر تنفذت: {len(xrow)} | ما تنفذت: {missed}") and ok
+                        f"📊 تقرير SPX | نهاية جلسة {label}\nأوامر تنفذت: {len(xrow)} | ما تنفذت: {missed}", SPX_BOT) and ok
     if srow:  # يطلع بس في الأيام اللي جت فيها إشارة SPY تجريبية
         ok = send_photo(cards.contract_report(srow, label, when, title="تقرير SPY التجريبي"),
                         f"🧪 تقرير إشارة SPY التجريبية | نهاية جلسة {label}") and ok
@@ -256,7 +257,7 @@ def alert_spx(data, sent, day):
         caption = (f"{'🟢 صعود' if kind == 'call' else '🔴 هبوط'} | SPX | {kind.upper()} ${opt['strike']:,.0f} | "
                    f"{opt['exp_label']}\nنطاق الشراء ${round(opt['low'] * 100):,} - ${round(opt['order'] * 100):,}"
                    + ("" if opt["stop"] else " | بدون وقف"))
-        if send_photo(cards.spx_card(r, opt, riyadh_time(), cancel_time), caption):
+        if send_photo(cards.spx_card(r, opt, riyadh_time(), cancel_time), caption, SPX_BOT):
             after_send(day, sent, key, r, opt, name)
             log("spx alert", key, r["score"], opt["symbol"])
 
@@ -311,9 +312,12 @@ def main():
     send(f"✅ الرادار شغال على السيرفر ببيانات Alpaca اللحظية\n"
          f"يفحص {len(tickers)} سهم كل دقيقة وقت السوق، وينبهك عند {ALERT_MIN}/10 أو أكثر مع عقد مطابق."
          + ("\nوإشارة SPY التجريبية (زخم + حجم + اتساع السوق) من 6 المغرب إلى 11 الليل." if SPY_ALERTS else "")
-         + ("\nوعقود SPX عند 5/8 أو أكثر، إلى قبل الإغلاق بربع ساعة." if SPX_ALERTS else "")
+         + ("\nوعقود SPX تجيك في البوت الثاني." if SPX_ALERTS and SPX_BOT != MAIN_BOT else "")
          + (f"\nوالأسهم الصغيرة (1 إلى 5 دولار): صعود فقط عند {PENNY_MIN}/10 أو أكثر"
             + (" — تجيك في بوت الأسهم." if PENNY_BOT != MAIN_BOT else "." ) if PENNY_ALERTS else ""))
+    if SPX_ALERTS and SPX_BOT != MAIN_BOT:
+        send("✅ هذا البوت صار خاص بعقود SPX\nتجيك هنا تنبيهات SPX عند 5/8 أو أكثر من 5:40 م إلى 11:45 م وتقريرها آخر الجلسة.\n"
+             "تنبيهات عقود الشركات تبقى في البوت الأساسي.", SPX_BOT)
     if PENNY_ALERTS and PENNY_BOT != MAIN_BOT:
         send(f"✅ بوت الأسهم الصغيرة شغال\nتجيك هنا تنبيهات الأسهم من 1 إلى 5 دولار (صعود عند {PENNY_MIN}/10 أو أكثر)"
              f" وتقريرها آخر الجلسة. تنبيهات العقود وتقريرها تبقى في البوت الأساسي.", PENNY_BOT)
