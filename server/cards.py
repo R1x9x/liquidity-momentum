@@ -224,6 +224,23 @@ def spx_card(sig, opt, when, cancel_time):
     return finish(img, footer(d, y, when))
 
 
+def spx_rise_card(kind, strike, exp_label, price, when):
+    """تنبيه ارتفاع عقد SPX: السترايك والانتهاء وسعر العقد الحين فقط."""
+    color = UP if kind == "call" else DN
+    h = 520
+    img = Image.new("RGB", (W, h), BG)
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((PAD, 40, W - PAD, h - 40), radius=28, fill=CARD, outline=color, width=3)
+    xr, y = W - PAD - 32, 72
+    xr -= pill(d, xr, y + 14, kind.upper(), color, BG, F["h2"], 60) + 18
+    d.text((xr, y), f"${strike:,.0f}", font=F["big"], fill=TEXT, anchor="ra")
+    pill(d, PAD + 32 + tw(d, exp_label, F["pill"]) + 40, y + 14, exp_label, SIGNAL, BG, h=60)
+    ctext(d, W / 2, 190, "سعر العقد الآن", F["body"], MUTED)
+    d.text((W / 2, 240), f"${price * 100:,.0f}", font=font("Bold", 128), fill=UP, anchor="ma")
+    ctext(d, W / 2, 424, f"{when} · بيانات Alpaca", F["small"], MUTED)
+    return finish(img, h)
+
+
 def contract_card(sig, opt, when, trial=False, warning=None):
     """sig: sym, side, score, checks. opt: kind, strike, exp_label, today, bid, ask,
     cost, volume, oi. Greeks and spread drive the pick but stay off the card.

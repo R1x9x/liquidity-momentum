@@ -262,6 +262,49 @@ def alert_spx(data, sent, day):
             log("spx alert", key, r["score"], opt["symbol"])
 
 
+def follow_path(day):
+    return os.path.join(STATE_DIR, f"spx-follow-{day}.json")
+
+
+def follow_spx(day):
+    """بعد تنفيذ أمر SPX: تنبيه كل ما سجل العقد سعر أعلى من آخر سعر انرسل، لين الوقف أو الإغلاق."""
+    recs = [r for r in report.load(STATE_DIR, day) if r["list"] in ("spx", "spx-late") and "order" in r]
+    if not recs:
+        return
+    try:
+        state = json.load(open(follow_path(day)))
+    except Exception:
+        state = {}
+    live = [r for r in recs if not state.get(f"{r['list']}:{r['side']}", {}).get("done")]
+    if not live:
+        return
+    now = dt.datetime.now(NY)
+    a = rc.api()
+    syms = sorted({r["option"] for r in live})
+    bars = report._option_bars(a, syms, dt.datetime.combine(now.date(), dt.time(9, 30), NY), now)
+    snaps = a.paged(f"{a.DATA}/v1beta1/options/snapshots", dict(symbols=",".join(syms), feed="opra", limit=1000), "snapshots")
+    for r in live:
+        key = f"{r['list']}:{r['side']}"
+        st = state.setdefault(key, dict(top=r["order"], done=False))
+        ts, cancel = dt.datetime.fromisoformat(r["ts"]), dt.datetime.fromisoformat(r["cancel"])
+        b = bars.get(r["option"], [])
+        fill = next((x[0] for x in b if ts < x[0] <= cancel and x[3] <= r["order"] * 0.98), None)
+        if fill is None:
+            st["done"] = now > cancel  # الأمر ما تنفذ: ما فيه متابعة
+            continue
+        if r["stop"] and any(x[0] > fill and x[3] <= r["order"] * 0.5 for x in b):
+            st["done"] = True
+            continue
+        price = float(((snaps.get(r["option"]) or {}).get("latestTrade") or {}).get("p") or 0)
+        if price > st["top"]:
+            caption = f"📈 SPX {r['kind'].upper()} ${r['strike']:,.0f} | ${price * 100:,.0f}"
+            if send_photo(cards.spx_rise_card(r["kind"], r["strike"], r["exp_label"], price, riyadh_time()), caption, SPX_BOT):
+                st["top"] = price
+                log("spx rise", key, price)
+    with open(follow_path(day), "w") as f:
+        json.dump(state, f)
+
+
 def alert_spy(spy, sent, day):
     """إشارة SPY التجريبية: الشروط الثلاثة مع بعض + عقد مطابق، مرة باليوم لكل اتجاه."""
     if not spy or not spy["signal"]:
@@ -335,6 +378,7 @@ def main():
             if SPX_ALERTS:
                 try:
                     alert_spx(data, sent, day)
+                    follow_spx(day)
                 except Exception as e:
                     log("spx alert error", e)
             if SPY_ALERTS:
