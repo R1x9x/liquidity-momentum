@@ -130,6 +130,31 @@ def outcome(bars, ts, entry, win_pct, stop_pct):
     return "close"
 
 
+def build_spx(recs, day):
+    """تقرير SPX: يرجع (صفوف الأوامر اللي تنفذت، عدد اللي ما تنفذت). الدخول = سعر الأمر، والتنفيذ إذا نزل العقد 2% تحته."""
+    spx = [r for r in recs if r["list"] in ("spx", "spx-late") and "order" in r]
+    if not spx:
+        return [], 0
+    d = dt.date.fromisoformat(day)
+    bars = _option_bars(rc.api(), sorted({r["option"] for r in spx}), dt.datetime.combine(d, dt.time(9, 30), NY),
+                        dt.datetime.combine(d, dt.time(16, 0), NY))
+    rows, missed = [], 0
+    for r in spx:
+        ts, cancel = dt.datetime.fromisoformat(r["ts"]), dt.datetime.fromisoformat(r["cancel"])
+        b = bars.get(r["option"], [])
+        fill = next((x[0] for x in b if ts < x[0] <= cancel and x[3] <= r["order"] * 0.98), None)
+        if fill is None:
+            missed += 1
+            continue
+        after = fill + dt.timedelta(minutes=1)
+        high, high_time, close = _after(b, after, r["order"])
+        rows.append(dict(sym=r["sym"], side=r["side"], kind=r["kind"], strike=r["strike"], exp_label=r["exp_label"],
+                         time=clock(ts), entry=r["order"], high=high, high_time=high_time, close=close,
+                         # بدون وقف: نسبة وقف فوق 100% ما تنضرب أبداً
+                         result=outcome(b, after, r["order"], cards.WIN_PCT, cards.STOP_PCT if r["stop"] else 101)))
+    return rows, missed
+
+
 def build(recs, day):
     """يرجع (صفوف العقود، صفوف الأسهم الصغيرة، صفوف SPY التجريبية) جاهزة لـ cards."""
     a = rc.api()

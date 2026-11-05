@@ -594,6 +594,117 @@ def spy_state(data, tickers, rules=SPY_RULES, rev_rules=REV_RULES):
                 sma=float((past["Close"].tail(19).sum() + price) / 20), vwap=price / (1 + stretch / 100))
 
 
+# ---------------- SPX: تنبيه خاص بعقود المؤشر ----------------
+# مختبرة على 82 جلسة (نوفمبر 2026) بأسعار عقود SPX الحقيقية: 8 نقاط على شارت SPY بدون شرطي السوق.
+# أمر الشراء تحت سعر التنبيه: أعلى النطاق هو سعر الأمر (مختبر)، وأسفله 5% أقل منه
+SPX_RULES = dict(sym="SPX", min_score=5, start=(9, 40), main_end=(15, 0), late_end=(15, 45), cancel_by=(15, 50),
+                 wait=30, min_vol=100, stale=300, span=0.025,
+                 main=dict(budget=(400, 1500), order=(0.15, 0.20), stop=True),
+                 late=dict(budget=(200, 350), order=(0.10, 0.15), stop=False))
+SPX_DROP = {"أقوى من السوق", "أضعف من السوق", "السوق داعم", "السوق ضاغط"}
+
+
+def spx_slot(now, rules=SPX_RULES):
+    """الفترة الحالية: main من 9:40 إلى 15:00، و late بعدها إلى 15:45 نيويورك، وإلا None."""
+    t = (now.hour, now.minute)
+    if rules["start"] <= t <= rules["main_end"]:
+        return "main"
+    if rules["main_end"] < t <= rules["late_end"]:
+        return "late"
+    return None
+
+
+def spx_signal(data, side, p=PARAMS, rules=SPX_RULES):
+    """نقاط SPX من 8 لاتجاه واحد (الشارت شارت SPY)، أو None إذا البيانات ما تكفي."""
+    intr, daily = data["intr"].get(MARKET), data["daily"].get(MARKET)
+    r = analyze(MARKET, intr, daily, market_state(intr, daily), data["b15"].get(MARKET), data["b60"].get(MARKET), p, side)
+    if not r:
+        return None
+    checks = [c for c in r["checks"] if c[0] not in SPX_DROP]
+    return dict(r, sym=rules["sym"], side=side, checks=checks, score=sum(bool(ok) for _, ok, _ in checks))
+
+
+def spx_level(quotes):
+    """مستوى SPX من أقرب كول وبوت لبعض (Alpaca ما يعطي سعر المؤشر): السترايك + الكول - البوت."""
+    best = None
+    for k, q in quotes.items():
+        if "call" in q and "put" in q:
+            gap = abs(q["call"] - q["put"])
+            if best is None or gap < best[0]:
+                best = (gap, k + q["call"] - q["put"])
+    return best[1] if best else None
+
+
+def spx_option(kind, spy_price, slot, rules=SPX_RULES, now=None):
+    """أقرب عقد SPXW للسعر ينتهي اليوم ضمن ميزانية الفترة. يرجع (العقد، السبب): ok / error / no_exp / no_match"""
+    a = api()
+    if a is None:
+        return None, "error"
+    now = now or dt.datetime.now(NY)
+    today = now.date()
+    ref = spy_price * 10
+    try:
+        contracts = a.cached(("spx", today, round(ref / 50)), 1800, lambda: a.paged(
+            f"{a.TRADE}/v2/options/contracts",
+            dict(underlying_symbols=rules["sym"], status="active", limit=10000, expiration_date=str(today),
+                 strike_price_gte=f"{ref * (1 - rules['span']):.0f}", strike_price_lte=f"{ref * (1 + rules['span']):.0f}"),
+            "option_contracts").get("_list", []))
+        # SPXW تسوية آخر اليوم، وعقود SPX الشهرية تسويتها الصبح فما تناسبنا
+        contracts = [c for c in contracts if c["symbol"].startswith("SPXW")]
+        if not contracts:
+            return None, "no_exp"
+        snaps = {}
+        for i in range(0, len(contracts), 100):
+            snaps.update(a.paged(f"{a.DATA}/v1beta1/options/snapshots",
+                                 dict(symbols=",".join(c["symbol"] for c in contracts[i:i + 100]), feed="opra", limit=1000),
+                                 "snapshots"))
+    except Exception:
+        return None, "error"
+    rows, mids = [], {}
+    for c in contracts:
+        s = snaps.get(c["symbol"]) or {}
+        q = s.get("latestQuote") or {}
+        bid, ask = float(q.get("bp") or 0), float(q.get("ap") or 0)
+        if bid <= 0 or ask < bid:
+            continue
+        strike = float(c["strike_price"])
+        mids.setdefault(strike, {})[c["type"]] = (bid + ask) / 2
+        rows.append((c, s, strike, bid, ask))
+    level = spx_level(mids)
+    if not level:
+        return None, "no_match"
+    cfg = rules[slot]
+    lo, hi = cfg["budget"]
+    T = max((dt.datetime.combine(today, dt.time(16, 0), NY) - now).total_seconds(), 60) / (365 * 24 * 3600)
+    found = []
+    for c, s, strike, bid, ask in rows:
+        if c["type"] != kind or not lo <= ask * 100 <= hi:
+            continue
+        bar, trade = s.get("dailyBar") or {}, s.get("latestTrade") or {}
+        vol = int(bar.get("v") or 0) if str(bar.get("t", ""))[:10] == str(today) else 0
+        try:
+            age = (now - dt.datetime.fromisoformat(str(trade.get("t"))[:19] + "+00:00")).total_seconds()
+        except ValueError:
+            continue
+        if vol < rules["min_vol"] or age > rules["stale"]:
+            continue
+        g = bs_greeks(kind, level, strike, T, (bid + ask) / 2)
+        if g:
+            found.append((g, c, strike, bid, ask, vol))
+    if not found:
+        return None, "no_match"
+    g, c, strike, bid, ask, vol = max(found, key=lambda x: x[0]["gamma"])
+    hi_pct, lo_pct = cfg["order"]
+    order, low = ask * (1 - hi_pct), ask * (1 - lo_pct)
+    cancel = min(now + dt.timedelta(minutes=rules["wait"]),
+                 dt.datetime.combine(today, dt.time(*rules["cancel_by"]), NY))
+    return dict(kind=kind, strike=strike, exp=today, today=True, exp_label=exp_label(today, today), dte=0,
+                bid=bid, ask=ask, spread=(ask - bid) / ((ask + bid) / 2) * 100, cost=ask * 100, volume=vol,
+                oi=int(float(c.get("open_interest") or 0)), delta=g["delta"], gamma=g["gamma"], theta=g["theta"],
+                iv=g["iv"] * 100, symbol=c["symbol"], level=level, slot=slot, stop=cfg["stop"],
+                order=order, low=low, cancel=cancel), "ok"
+
+
 def live_quotes(syms):
     """آخر سعر ونسبة التغير من إغلاق أمس لكل سهم (طلب واحد خفيف من Alpaca)."""
     a = api()

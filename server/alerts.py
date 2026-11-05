@@ -25,8 +25,10 @@ PENNY_BOT = (os.environ.get("PENNY_TG_TOKEN") or TOKEN, os.environ.get("PENNY_TG
 MAIN_BOT = (TOKEN, CHAT)
 ALERT_MIN = int(os.environ.get("CONTRACT_MIN_SCORE", "7"))  # العقود
 PENNY_MIN = int(os.environ.get("PENNY_MIN_SCORE", "7"))  # الأسهم الصغيرة لها حد مستقل
-PENNY_ALERTS = os.environ.get("PENNY_ALERTS", "1") == "1"
+# بوت الأسهم الصغيرة موقف حالياً بطلب المستخدم. اسم جديد عشان PENNY_ALERTS=1 القديم في .env السيرفر ما يشغله
+PENNY_ALERTS = os.environ.get("PENNY_ALERTS_ON", "0") == "1"
 SPY_ALERTS = os.environ.get("SPY_ALERTS", "1") == "1"  # إشارة SPY التجريبية (زخم + حجم + اتساع السوق)
+SPX_ALERTS = os.environ.get("SPX_ALERTS", "1") == "1"  # عقود مؤشر SPX
 STATE_DIR = os.environ.get("STATE_DIR", "/opt/radar/state")
 os.makedirs(STATE_DIR, exist_ok=True)
 
@@ -85,7 +87,9 @@ def load_sent(day):
     # كل تنبيه انرسل اليوم ومسجل في signals.csv ما يتكرر حتى لو ملف sent ما انحفظ
     for r in report.csv_records(STATE_DIR, day):
         sent.add(f"{r['sym']}:{r['list']}" if r["list"] == "penny"
-                 else f"SPY:spy-{r['side']}" if r["list"] == "spy" else f"{r['sym']}:{r['side']}")
+                 else f"SPY:spy-{r['side']}" if r["list"] == "spy"
+                 else f"SPX:{r['list']}-{r['side']}" if r["list"] in ("spx", "spx-late")
+                 else f"{r['sym']}:{r['side']}")
     return sent
 
 
@@ -116,6 +120,8 @@ def remember(day, r, opt, kind):
                    opt_info=dict(dte=opt["dte"], delta=round(float(opt["delta"]), 3), gamma=round(float(opt["gamma"]), 4),
                                  theta=round(float(opt["theta"]), 4), spread=round(float(opt["spread"]), 2),
                                  iv=round(float(opt["iv"]), 1), volume=int(opt["volume"]), oi=int(opt["oi"])))
+        if "order" in opt:  # SPX: أمر شراء تحت سعر التنبيه
+            rec.update(order=round(float(opt["order"]), 2), cancel=opt["cancel"].isoformat(), stop=opt["stop"])
     else:
         rec.update(entry=round(float(r["price"]), 4))
     report.add(STATE_DIR, day, rec)
@@ -137,6 +143,10 @@ def send_reports(day):
     label = report.day_label(day)
     when = riyadh_time()
     ok = send_photo(cards.contract_report(crow, label, when), f"📊 تقرير العقود | نهاية جلسة {label}")
+    xrow, missed = report.build_spx(report.records(STATE_DIR, day), day)
+    if xrow or missed:  # يطلع بس في الأيام اللي جا فيها تنبيه SPX
+        ok = send_photo(cards.contract_report(xrow, label, when, title="تقرير SPX"),
+                        f"📊 تقرير SPX | نهاية جلسة {label}\nأوامر تنفذت: {len(xrow)} | ما تنفذت: {missed}") and ok
     if srow:  # يطلع بس في الأيام اللي جت فيها إشارة SPY تجريبية
         ok = send_photo(cards.contract_report(srow, label, when, title="تقرير SPY التجريبي"),
                         f"🧪 تقرير إشارة SPY التجريبية | نهاية جلسة {label}") and ok
@@ -215,7 +225,40 @@ def alert_big(tickers, sent, day):
         if send_photo(cards.contract_card(dict(r, zone_text=zone_text), opt, riyadh_time()), caption):
             after_send(day, sent, key, r, opt, "big")
             log("alert", key, r["score"], opt["symbol"])
-    return mkt, len(results), spy
+    return mkt, len(results), spy, data
+
+
+def alert_spx(data, sent, day):
+    """عقود SPX: أول إشارة 5 من 8 في كل فترة ولكل اتجاه، مرة باليوم. بدون عقد مطابق تضيع الإشارة (زي الاختبار)."""
+    now = dt.datetime.now(NY)
+    slot = rc.spx_slot(now)
+    if not slot:
+        return
+    for side in ("up", "dn"):
+        name = "spx" if slot == "main" else "spx-late"
+        key = f"SPX:{name}-{side}"
+        if key in sent:
+            continue
+        r = rc.spx_signal(data, side)
+        if not r or r["score"] < rc.SPX_RULES["min_score"]:
+            continue
+        kind = "call" if side == "up" else "put"
+        opt, why = rc.spx_option(kind, r["price"], slot, now=now)
+        if why == "error":
+            continue  # خطأ اتصال: نرجع نشيك الدقيقة الجاية
+        if not opt:
+            log("spx no contract", key, why)
+            sent.add(key)
+            save_sent(day, sent)
+            continue
+        cancel = opt["cancel"].astimezone(RIYADH)
+        cancel_time = cancel.strftime("%I:%M").lstrip("0") + (" م" if cancel.hour >= 12 else " ص")
+        caption = (f"{'🟢 صعود' if kind == 'call' else '🔴 هبوط'} | SPX | {kind.upper()} ${opt['strike']:,.0f} | "
+                   f"{opt['exp_label']}\nنطاق الشراء ${round(opt['low'] * 100):,} - ${round(opt['order'] * 100):,}"
+                   + ("" if opt["stop"] else " | بدون وقف"))
+        if send_photo(cards.spx_card(r, opt, riyadh_time(), cancel_time), caption):
+            after_send(day, sent, key, r, opt, name)
+            log("spx alert", key, r["score"], opt["symbol"])
 
 
 def alert_spy(spy, sent, day):
@@ -268,6 +311,7 @@ def main():
     send(f"✅ الرادار شغال على السيرفر ببيانات Alpaca اللحظية\n"
          f"يفحص {len(tickers)} سهم كل دقيقة وقت السوق، وينبهك عند {ALERT_MIN}/10 أو أكثر مع عقد مطابق."
          + ("\nوإشارة SPY التجريبية (زخم + حجم + اتساع السوق) من 6 المغرب إلى 11 الليل." if SPY_ALERTS else "")
+         + ("\nوعقود SPX عند 5/8 أو أكثر، إلى قبل الإغلاق بربع ساعة." if SPX_ALERTS else "")
          + (f"\nوالأسهم الصغيرة (1 إلى 5 دولار): صعود فقط عند {PENNY_MIN}/10 أو أكثر"
             + (" — تجيك في بوت الأسهم." if PENNY_BOT != MAIN_BOT else "." ) if PENNY_ALERTS else ""))
     if PENNY_ALERTS and PENNY_BOT != MAIN_BOT:
@@ -283,7 +327,12 @@ def main():
             day = now_ny.strftime("%Y-%m-%d")
             report.touch(STATE_DIR, day)
             sent = load_sent(day)
-            mkt, n, spy = alert_big(tickers, sent, day)
+            mkt, n, spy, data = alert_big(tickers, sent, day)
+            if SPX_ALERTS:
+                try:
+                    alert_spx(data, sent, day)
+                except Exception as e:
+                    log("spx alert error", e)
             if SPY_ALERTS:
                 try:
                     alert_spy(spy, sent, day)

@@ -193,6 +193,37 @@ def warning_box(d, y, title, reasons):
     return y + h + 28
 
 
+def spx_card(sig, opt, when, cancel_time):
+    """sig: side, score, checks. opt من rc.spx_option: نطاق الشراء، والهدف والوقف محسوبين من طرفي النطاق."""
+    up = sig["side"] == "up"
+    color = UP if up else DN
+    img = Image.new("RGB", (W, 3200), BG)
+    d = ImageDraw.Draw(img)
+    y = header(img, d, brand(img), "SPX", [("صعود" if up else "هبوط", color, BG)], sig["score"], len(sig["checks"]), color)
+
+    lo, hi = round(opt["low"] * 100), round(opt["order"] * 100)
+    top, h = y, 560
+    d.rounded_rectangle((PAD, top, W - PAD, top + h), radius=28, fill=CARD, outline=color, width=3)
+    xr = W - PAD - 28
+    y = top + 30
+    xr -= pill(d, xr, y + 14, opt["kind"].upper(), color, BG, F["h2"], 60) + 18
+    d.text((xr, y), f"${opt['strike']:,.0f}", font=F["big"], fill=TEXT, anchor="ra")
+    pill(d, PAD + 28 + tw(d, opt["exp_label"], F["pill"]) + 40, y + 14, opt["exp_label"], SIGNAL, BG, h=60)
+    y += 108
+    x0, x1 = PAD + 28, W - PAD - 28
+    d.rounded_rectangle((x0, y, x1, y + 132), radius=18, fill=TILE, outline=SIGNAL, width=2)
+    ctext(d, (x0 + x1) / 2, y + 12, "نطاق الشراء", F["small"], MUTED)
+    d.text(((x0 + x1) / 2, y + 48), f"${lo:,}  -  ${hi:,}", font=F["big"], fill=SIGNAL, anchor="ma")
+    y += 148
+    stop = (f"الوقف -{STOP_PCT}%", f"${round(lo * (1 - STOP_PCT / 100)):,} - ${round(hi * (1 - STOP_PCT / 100)):,}", DN) \
+        if opt["stop"] else ("الوقف", "بدون وقف", SIGNAL)
+    y = tiles(d, y, [(f"الهدف +{WIN_PCT}%",
+                      f"${round(lo * (1 + WIN_PCT / 100)):,} - ${round(hi * (1 + WIN_PCT / 100)):,}", UP), stop]) + 16
+    tiles(d, y, [("سعر العقد وقت التنبيه", f"${opt['cost']:,.0f}", None), ("ينلغي الأمر الساعة", cancel_time, None)])
+    y = checklist(d, top + h + 28, sig["checks"], color)
+    return finish(img, footer(d, y, when))
+
+
 def contract_card(sig, opt, when, trial=False, warning=None):
     """sig: sym, side, score, checks. opt: kind, strike, exp_label, today, bid, ask,
     cost, volume, oi. Greeks and spread drive the pick but stay off the card.
