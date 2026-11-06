@@ -236,29 +236,34 @@ def alert_big(tickers, sent, day):
     return mkt, len(results), spy, data
 
 
+def spx_history(day, sent):
+    """تنبيهات SPX اليوم: (الاتجاه، الوقت، العقد). نقرا sent بعد لأن سجل التقرير ممكن ينقص لو صار خطأ."""
+    hist = [(r["side"], r["ts"], r["option"]) for r in report.load(STATE_DIR, day)
+            if r["list"] in ("spx", "spx-late") and "order" in r]
+    return hist + [tuple(k.split("|")[1:]) for k in sent if k.startswith("SPX|")]
+
+
 def alert_spx(data, sent, day):
-    """عقود SPX: أول إشارة 5 من 8 في كل فترة ولكل اتجاه، مرة باليوم. بدون عقد مطابق تضيع الإشارة (زي الاختبار)."""
+    """عقود SPX: كل إشارة 5 من 8 لعقد جديد، وبين كل تنبيهين بنفس الاتجاه فاصل rules["gap"] دقيقة."""
     now = dt.datetime.now(NY)
     slot = rc.spx_slot(now)
     if not slot:
         return
+    hist = spx_history(day, sent)
+    gap = dt.timedelta(minutes=rc.SPX_RULES["gap"])
     for side in ("up", "dn"):
         name = "spx" if slot == "main" else "spx-late"
-        key = f"SPX:{name}-{side}"
-        if key in sent:
+        if any(s == side and now - dt.datetime.fromisoformat(t) < gap for s, t, _ in hist):
             continue
         r = rc.spx_signal(data, side)
         if not r or r["score"] < rc.SPX_RULES["min_score"]:
             continue
         kind = "call" if side == "up" else "put"
-        opt, why = rc.spx_option(kind, r["price"], slot, now=now)
-        if why == "error":
-            continue  # خطأ اتصال: نرجع نشيك الدقيقة الجاية
+        opt, why = rc.spx_option(kind, r["price"], slot, now=now, skip={o for _, _, o in hist})
         if not opt:
-            log("spx no contract", key, why)
-            sent.add(key)
-            save_sent(day, sent)
+            log("spx no contract", name, side, why)  # نرجع نشيك الدقيقة الجاية
             continue
+        key = f"SPX|{side}|{now.isoformat()}|{opt['symbol']}"
         cancel = opt["cancel"].astimezone(RIYADH)
         cancel_time = cancel.strftime("%I:%M").lstrip("0") + (" م" if cancel.hour >= 12 else " ص")
         caption = (f"{'🟢 صعود' if kind == 'call' else '🔴 هبوط'} | SPX | {kind.upper()} ${opt['strike']:,.0f} | "
@@ -274,7 +279,8 @@ def follow_path(day):
 
 
 def follow_spx(day):
-    """بعد تنفيذ أمر SPX: تنبيه كل ما سجل العقد سعر أعلى من آخر سعر انرسل، لين الوقف أو الإغلاق."""
+    """كل عقد SPX انرسل تنبيهه: بطاقة كل ما سجل سعر أعلى من آخر سعر انرسل، لين الوقف أو الإغلاق.
+    يبدأ من سعر التنبيه، وإذا تنفذ الأمر يبدأ من جديد من سعر الأمر."""
     recs = [r for r in report.load(STATE_DIR, day) if r["list"] in ("spx", "spx-late") and "order" in r]
     if not recs:
         return
@@ -282,7 +288,7 @@ def follow_spx(day):
         state = json.load(open(follow_path(day)))
     except Exception:
         state = {}
-    live = [r for r in recs if not state.get(f"{r['list']}:{r['side']}", {}).get("done")]
+    live = [r for r in recs if not state.get(r["option"], {}).get("done")]
     if not live:
         return
     now = dt.datetime.now(NY)
@@ -291,19 +297,21 @@ def follow_spx(day):
     bars = report._option_bars(a, syms, dt.datetime.combine(now.date(), dt.time(9, 30), NY), now)
     snaps = a.paged(f"{a.DATA}/v1beta1/options/snapshots", dict(symbols=",".join(syms), feed="opra", limit=1000), "snapshots")
     for r in live:
-        key = f"{r['list']}:{r['side']}"
-        st = state.setdefault(key, dict(top=r["order"], done=False))
+        key = r["option"]
+        st = state.setdefault(key, dict(top=r["entry"], done=False, filled=False))
         ts, cancel = dt.datetime.fromisoformat(r["ts"]), dt.datetime.fromisoformat(r["cancel"])
-        b = bars.get(r["option"], [])
+        b = bars.get(key, [])
         fill = next((x[0] for x in b if ts < x[0] <= cancel and x[3] <= r["order"] * 0.98), None)
-        if fill is None:
-            st["done"] = now > cancel  # الأمر ما تنفذ: ما فيه متابعة
-            continue
-        if r["stop"] and any(x[0] > fill and x[3] <= r["order"] * 0.5 for x in b):
+        if fill and not st["filled"]:
+            st.update(filled=True, top=r["order"])
+        start, base = (fill, r["order"]) if fill else (ts, r["entry"])
+        if r["stop"] and any(x[0] > start and x[3] <= base * 0.5 for x in b):
             st["done"] = True
             continue
-        price = float(((snaps.get(r["option"]) or {}).get("latestTrade") or {}).get("p") or 0)
-        if price > st["top"]:
+        trade = (snaps.get(key) or {}).get("latestTrade") or {}
+        price = float(trade.get("p") or 0)
+        # صفقة قبل التنبيه مو ارتفاع
+        if price > st["top"] and str(trade.get("t", ""))[:19] >= ts.astimezone(dt.timezone.utc).isoformat()[:19]:
             caption = f"📈 SPX {r['kind'].upper()} ${r['strike']:,.0f} | ${price * 100:,.0f}"
             if send_photo(cards.spx_rise_card(r["kind"], r["strike"], r["exp_label"], price, riyadh_time()), caption, SPX_BOT):
                 st["top"] = price

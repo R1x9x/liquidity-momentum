@@ -598,7 +598,7 @@ def spy_state(data, tickers, rules=SPY_RULES, rev_rules=REV_RULES):
 # مختبرة على 82 جلسة (نوفمبر 2026) بأسعار عقود SPX الحقيقية: 8 نقاط على شارت SPY بدون شرطي السوق.
 # أمر الشراء تحت سعر التنبيه: أعلى النطاق هو سعر الأمر (مختبر)، وأسفله 5% أقل منه
 SPX_RULES = dict(sym="SPX", min_score=5, start=(9, 40), main_end=(15, 0), late_end=(15, 45), cancel_by=(15, 50),
-                 wait=30, min_vol=100, stale=300, span=0.025,
+                 wait=30, gap=30, min_vol=100, stale=300, span=0.025,
                  main=dict(budget=(400, 1500), order=(0.15, 0.20), stop=True),
                  late=dict(budget=(200, 350), order=(0.10, 0.15), stop=False))
 SPX_DROP = {"أقوى من السوق", "أضعف من السوق", "السوق داعم", "السوق ضاغط"}
@@ -635,8 +635,8 @@ def spx_level(quotes):
     return best[1] if best else None
 
 
-def spx_option(kind, spy_price, slot, rules=SPX_RULES, now=None):
-    """أقرب عقد SPXW للسعر ينتهي اليوم ضمن ميزانية الفترة. يرجع (العقد، السبب): ok / error / no_exp / no_match"""
+def spx_option(kind, spy_price, slot, rules=SPX_RULES, now=None, skip=()):
+    """أقرب عقد SPXW للسعر ينتهي اليوم ضمن ميزانية الفترة، غير العقود اللي في skip. يرجع (العقد، السبب): ok / error / no_exp / no_match"""
     a = api()
     if a is None:
         return None, "error"
@@ -678,7 +678,7 @@ def spx_option(kind, spy_price, slot, rules=SPX_RULES, now=None):
     T = max((dt.datetime.combine(today, dt.time(16, 0), NY) - now).total_seconds(), 60) / (365 * 24 * 3600)
     found = []
     for c, s, strike, bid, ask in rows:
-        if c["type"] != kind or not lo <= ask * 100 <= hi:
+        if c["type"] != kind or c["symbol"] in skip or not lo <= ask * 100 <= hi:
             continue
         bar, trade = s.get("dailyBar") or {}, s.get("latestTrade") or {}
         vol = int(bar.get("v") or 0) if str(bar.get("t", ""))[:10] == str(today) else 0
