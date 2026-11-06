@@ -139,15 +139,22 @@ def after_send(day, sent, key, r, opt, kind):
         log("record error", key, e)
 
 
+def send_spx_report(day):
+    """يطلع بس في الأيام اللي جا فيها تنبيه SPX."""
+    rows, missed = report.build_spx(report.records(STATE_DIR, day), day)
+    if not rows:
+        return True
+    label = report.day_label(day)
+    return send_photo(cards.contract_report(rows, label, riyadh_time(), title="تقرير SPX", target=False),
+                      f"📊 تقرير SPX | نهاية جلسة {label}\nأوامر تنفذت: {len(rows) - missed} | ما تنفذت: {missed}", SPX_BOT)
+
+
 def send_reports(day):
     crow, prow, srow = report.build(report.records(STATE_DIR, day), day)
     label = report.day_label(day)
     when = riyadh_time()
     ok = send_photo(cards.contract_report(crow, label, when), f"📊 تقرير العقود | نهاية جلسة {label}")
-    xrow, missed = report.build_spx(report.records(STATE_DIR, day), day)
-    if xrow or missed:  # يطلع بس في الأيام اللي جا فيها تنبيه SPX
-        ok = send_photo(cards.contract_report(xrow, label, when, title="تقرير SPX", target=False),
-                        f"📊 تقرير SPX | نهاية جلسة {label}\nأوامر تنفذت: {len(xrow)} | ما تنفذت: {missed}", SPX_BOT) and ok
+    ok = send_spx_report(day) and ok
     if srow:  # يطلع بس في الأيام اللي جت فيها إشارة SPY تجريبية
         ok = send_photo(cards.contract_report(srow, label, when, title="تقرير SPY التجريبي"),
                         f"🧪 تقرير إشارة SPY التجريبية | نهاية جلسة {label}") and ok
@@ -399,7 +406,9 @@ def main():
 
 
 if __name__ == "__main__":
-    if sys.argv[1:2] == ["report"]:  # يدوي: python alerts.py report [YYYY-MM-DD]
+    if sys.argv[1:2] == ["report-spx"]:  # يدوي: python alerts.py report-spx YYYY-MM-DD
+        print("sent" if send_spx_report(sys.argv[2]) else "failed")
+    elif sys.argv[1:2] == ["report"]:  # يدوي: python alerts.py report [YYYY-MM-DD]
         send_reports(sys.argv[2] if len(sys.argv) > 2 else dt.datetime.now(NY).strftime("%Y-%m-%d"))
     else:
         main()

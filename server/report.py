@@ -131,7 +131,7 @@ def outcome(bars, ts, entry, win_pct, stop_pct):
 
 
 def build_spx(recs, day):
-    """تقرير SPX: يرجع (صفوف الأوامر اللي تنفذت، عدد اللي ما تنفذت). الدخول = سعر الأمر، والتنفيذ إذا نزل العقد 2% تحته."""
+    """تقرير SPX: يرجع (صفوف كل التنبيهات، عدد اللي ما تنفذت). الدخول = سعر الأمر، والتنفيذ إذا نزل العقد 2% تحته."""
     spx = [r for r in recs if r["list"] in ("spx", "spx-late") and "order" in r]
     if not spx:
         return [], 0
@@ -145,13 +145,13 @@ def build_spx(recs, day):
         fill = next((x[0] for x in b if ts < x[0] <= cancel and x[3] <= r["order"] * 0.98), None)
         if fill is None:
             missed += 1
-            continue
-        after = fill + dt.timedelta(minutes=1)
+        after = (fill or ts) + dt.timedelta(minutes=1)
         high, high_time, close = _after(b, after, r["order"])
         rows.append(dict(sym=r["sym"], side=r["side"], kind=r["kind"], strike=r["strike"], exp_label=r["exp_label"],
                          time=clock(ts), entry=r["order"], high=high, high_time=high_time, close=close,
                          # ما فيه هدف ربح في SPX، وبدون وقف: نسب خارج المدى ما تنضرب أبداً
-                         result=outcome(b, after, r["order"], 10 ** 9, cards.STOP_PCT if r["stop"] else 101)))
+                         result="miss" if fill is None else outcome(b, after, r["order"], 10 ** 9,
+                                                                    cards.STOP_PCT if r["stop"] else 101)))
     return rows, missed
 
 
