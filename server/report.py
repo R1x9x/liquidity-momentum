@@ -131,28 +131,23 @@ def outcome(bars, ts, entry, win_pct, stop_pct):
 
 
 def build_spx(recs, day):
-    """تقرير SPX: يرجع (صفوف كل التنبيهات، عدد اللي ما تنفذت). الدخول = سعر الأمر، والتنفيذ إذا نزل العقد 2% تحته."""
+    """تقرير SPX: كل تنبيه من سعر التنبيه. رابحة = وصل +30% قبل الوقف، وغير كذا خاسرة."""
     spx = [r for r in recs if r["list"] in ("spx", "spx-late") and "order" in r]
     if not spx:
-        return [], 0
+        return []
     d = dt.date.fromisoformat(day)
     bars = _option_bars(rc.api(), sorted({r["option"] for r in spx}), dt.datetime.combine(d, dt.time(9, 30), NY),
                         dt.datetime.combine(d, dt.time(16, 0), NY))
-    rows, missed = [], 0
+    rows = []
     for r in spx:
-        ts, cancel = dt.datetime.fromisoformat(r["ts"]), dt.datetime.fromisoformat(r["cancel"])
+        ts = dt.datetime.fromisoformat(r["ts"])
         b = bars.get(r["option"], [])
-        fill = next((x[0] for x in b if ts < x[0] <= cancel and x[3] <= r["order"] * 0.98), None)
-        if fill is None:
-            missed += 1
-        after = (fill or ts) + dt.timedelta(minutes=1)
-        high, high_time, close = _after(b, after, r["order"])
+        high, high_time, close = _after(b, ts, r["entry"])
         rows.append(dict(sym=r["sym"], side=r["side"], kind=r["kind"], strike=r["strike"], exp_label=r["exp_label"],
-                         time=clock(ts), entry=r["order"], high=high, high_time=high_time, close=close,
-                         # ما فيه هدف ربح في SPX، وبدون وقف: نسب خارج المدى ما تنضرب أبداً
-                         result="miss" if fill is None else outcome(b, after, r["order"], 10 ** 9,
-                                                                    cards.STOP_PCT if r["stop"] else 101)))
-    return rows, missed
+                         time=clock(ts), entry=r["entry"], high=high, high_time=high_time, close=close,
+                         # الساعة الأخيرة بدون وقف: نسبة فوق 100% ما تنضرب أبداً
+                         result=outcome(b, ts, r["entry"], cards.WIN_PCT, cards.STOP_PCT if r["stop"] else 101)))
+    return rows
 
 
 def build(recs, day):

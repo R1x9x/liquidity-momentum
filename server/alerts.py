@@ -141,11 +141,11 @@ def after_send(day, sent, key, r, opt, kind):
 
 def send_spx_report(day):
     """يطلع بس في الأيام اللي جا فيها تنبيه SPX."""
-    rows, missed = report.build_spx(report.records(STATE_DIR, day), day)
+    rows = report.build_spx(report.records(STATE_DIR, day), day)
     if not rows:
         return True
     label = report.day_label(day)
-    return send_photo(cards.contract_report(rows, label, riyadh_time(), title="تقرير SPX", target=False),
+    return send_photo(cards.contract_report(rows, label, riyadh_time(), title="تقرير SPX", spx=True),
                       f"📊 تقرير SPX | نهاية جلسة {label}", SPX_BOT)
 
 
