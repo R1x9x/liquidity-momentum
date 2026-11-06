@@ -142,7 +142,15 @@ def build_spx(recs, day):
     for r in spx:
         ts = dt.datetime.fromisoformat(r["ts"])
         b = bars.get(r["option"], [])
-        high, high_time, close = _after(b, ts, r["entry"])
+        close = _after(b, ts, r["entry"])[2]
+        # أعلى سعر قبل الوقف: اللي بعد الوقف ما ينحسب لأن الصفقة انتهت
+        live = []
+        for x in b:
+            if x[0] >= ts:
+                if r["stop"] and x[3] <= r["entry"] * (1 - cards.STOP_PCT / 100):
+                    break
+                live.append(x)
+        high, high_time, _ = _after(live, ts, r["entry"])
         rows.append(dict(sym=r["sym"], side=r["side"], kind=r["kind"], strike=r["strike"], exp_label=r["exp_label"],
                          time=clock(ts), entry=r["entry"], high=high, high_time=high_time, close=close,
                          # الساعة الأخيرة بدون وقف: نسبة فوق 100% ما تنضرب أبداً

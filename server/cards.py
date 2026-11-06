@@ -478,8 +478,13 @@ def contract_report(rows, day, when, title="تقرير العقود", spx=False)
         ctext(d, W / 2, y + 48, "ما جاك ولا تنبيه عقد اليوم", F["h2"], MUTED)
         return finish(img, footer(d, y + 140, when))
     # winners count +WIN_PCT; every contract that missed the target goes to the loss side (stop or close)
-    y = pnl_row(d, y - 24, sum(contract_pnl(r) for r in rows if contract_result(r) == "win"),
-                sum(contract_pnl(r) for r in rows if contract_result(r) != "win"), cost) - 6
+    if spx:  # نظري: ما أحد يعرف القمة وقتها، فمكتوب عليه إنه مو ربح محقق
+        top = sum((r["high"] - r["entry"]) * 100 for r in rows)
+        y = tiles(d, y - 24, [("الفرق عند أعلى سعر · نظري", f"+${top:,.0f}", UP, "مو ربح محقق")],
+                  x0=PAD, x1=W - PAD, h=150) + 18
+    else:
+        y = pnl_row(d, y - 24, sum(contract_pnl(r) for r in rows if contract_result(r) == "win"),
+                    sum(contract_pnl(r) for r in rows if contract_result(r) != "win"), cost) - 6
 
     def name(d, y, r, g):
         color = UP if r["side"] == "up" else DN
@@ -495,8 +500,8 @@ def contract_report(rows, day, when, title="تقرير العقود", spx=False)
               # SPX: قيمة العقد كاملة زي بطاقة التنبيه
               money=(lambda v: f"${v * 100:,.0f}") if spx else (lambda v: f"${v:.2f}"))
     y = notes_block(d, y, [
-        f"رابحة = وصل العقد +{WIN_PCT}% من سعر التنبيه قبل الوقف، وتنحسب ربح {WIN_PCT}%. غير كذا خاسرة.",
-        f"ضرب الوقف = نزل {STOP_PCT}% من سعر التنبيه قبل +{WIN_PCT}%. الساعة الأخيرة بدون وقف، وتنحسب على الإغلاق."] if spx else [
+        f"رابحة = وصل العقد +{WIN_PCT}% من سعر التنبيه قبل الوقف. غير كذا خاسرة.",
+        f"أعلى سعر قبل الوقف من سعر التنبيه، والرقم نظري. ضرب الوقف = نزل {STOP_PCT}% قبل +{WIN_PCT}%."] if spx else [
         f"رابحة = وصل العقد +{WIN_PCT}% قبل ما ينزل {STOP_PCT}%، وتنحسب ربح {WIN_PCT}% على أساس البيع عند الهدف.",
         f"ضرب الوقف = نزل {STOP_PCT}% قبل الهدف، وتنحسب خسارة {STOP_PCT}%. غير كذا تنحسب على سعر الإغلاق."])
     return finish(img, footer(d, y, when))
