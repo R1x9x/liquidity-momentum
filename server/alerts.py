@@ -146,7 +146,7 @@ def send_spx_report(day):
         return True
     label = report.day_label(day)
     return send_photo(cards.contract_report(rows, label, riyadh_time(), title="تقرير SPX", target=False),
-                      f"📊 تقرير SPX | نهاية جلسة {label}\nأوامر تنفذت: {len(rows) - missed} | ما تنفذت: {missed}", SPX_BOT)
+                      f"📊 تقرير SPX | نهاية جلسة {label}", SPX_BOT)
 
 
 def send_reports(day):

@@ -426,7 +426,7 @@ def col_x(i):
     return PAD + 24 + COL_W * (2 - i) + COL_W / 2
 
 
-def table(d, y, rows, name_label, draw_name, tag=lambda r: None, entry_label="سعر التنبيه"):
+def table(d, y, rows, name_label, draw_name, tag=lambda r: None, entry_label="سعر التنبيه", money=lambda v: f"${v:.2f}"):
     """One compact row per alert so the whole report fits one phone-sized image."""
     heads = (name_label, entry_label, "أعلى سعر", "الإغلاق")
     rtext(d, W - PAD - 28, y, heads[0], F["small"], MUTED)
@@ -443,11 +443,13 @@ def table(d, y, rows, name_label, draw_name, tag=lambda r: None, entry_label="س
             d.line((PAD + 24, y, W - PAD - 24, y), fill=LINE, width=1)
         color = draw_name(d, y, r, g)
         d.rounded_rectangle((W - PAD - 8, y + rh // 6, W - PAD, y + rh - rh // 6), radius=4, fill=color)
-        d.text((col_x(0), y + g["val"]), f"${r['entry']:.2f}", font=g["cell"], fill=TEXT, anchor="ma")
+        d.text((col_x(0), y + g["val"]), money(r["entry"]), font=g["cell"], fill=TEXT, anchor="ma")
         for i, val, extra in ((1, r["high"], r["high_time"]), (2, r["close"], None)):
-            d.text((col_x(i), y + g["val"]), f"${val:.2f}", font=g["cell"], fill=TEXT, anchor="ma")
+            d.text((col_x(i), y + g["val"]), money(val), font=g["cell"], fill=TEXT, anchor="ma")
             p = pct(r["entry"], val)
             line = f"{p:+.0f}%" + (f"  {extra}" if extra else "")
+            if r.get("result") == "miss":  # ما انشرى، فنسبة من سعر الأمر تضخّم الرقم
+                line, p = extra or "", 1
             if i == 2 and tag(r):
                 line, p = tag(r)
             d.text((col_x(i), y + g["sub2"]), ar(line), font=g["tiny"], fill=UP if p >= 0 else DN, anchor="ma")
@@ -472,10 +474,9 @@ def contract_report(rows, day, when, title="تقرير العقود", target=Tru
     good = (lambda r: contract_result(r) == "win") if target else (lambda r: contract_pnl(r) > 0)
     win = sum(good(r) for r in done)
     cost = sum(r["entry"] * 100 for r in done)
-    y = report_header(img, d, title, day, [
-        total_tile(done, cost, "عقد", "عقود"),
-        ("رابحة", str(win), UP),
-        ("خاسرة", str(len(done) - win), DN)])
+    first = total_tile(done, cost, "عقد", "عقود") if target else \
+        ("التنبيهات", str(len(rows)), None)
+    y = report_header(img, d, title, day, [first, ("رابحة", str(win), UP), ("خاسرة", str(len(done) - win), DN)])
     if not rows:
         d.rounded_rectangle((PAD, y, W - PAD, y + 140), radius=24, fill=CARD)
         ctext(d, W / 2, y + 48, "ما جاك ولا تنبيه عقد اليوم", F["h2"], MUTED)
@@ -490,19 +491,20 @@ def contract_report(rows, day, when, title="تقرير العقود", target=Tru
         xr = W - PAD - 28
         xr -= rtext(d, xr, y + g["top"], r["sym"], g["cell"]) + 12
         xr -= pill(d, xr, y + g["top"] + 6, r["kind"].upper(), color, BG, f=g["pill"], h=g["ph"]) + 10
-        rtext(d, xr, y + g["top"], f"${r['strike']:g}", g["cell"])
+        rtext(d, xr, y + g["top"], f"${r['strike']:g}" if target else f"${r['strike']:,.0f}", g["cell"])
         rtext(d, W - PAD - 28, y + g["sub"], f"{r['time']} · {r['exp_label']}", g["tiny"], MUTED)
         return color
 
-    tags = {"win": (f"هدف +{WIN_PCT}%", 1), "stop": ("ضرب الوقف", -1), "miss": ("ما تنفذ", -1)}
+    tags = {"win": (f"هدف +{WIN_PCT}%", 1), "stop": ("ضرب الوقف", -1)}
     y = table(d, y, rows, "العقد", name, tag=lambda r: tags.get(contract_result(r)),
-              entry_label="سعر التنبيه" if target else "سعر الأمر")
+              entry_label="سعر التنبيه" if target else "سعر الأمر",
+              # SPX: قيمة العقد كاملة زي بطاقة التنبيه
+              money=(lambda v: f"${v:.2f}") if target else (lambda v: f"${v * 100:,.0f}"))
     y = notes_block(d, y, [
         f"رابحة = وصل العقد +{WIN_PCT}% قبل ما ينزل {STOP_PCT}%، وتنحسب ربح {WIN_PCT}% على أساس البيع عند الهدف.",
         f"ضرب الوقف = نزل {STOP_PCT}% قبل الهدف، وتنحسب خسارة {STOP_PCT}%. غير كذا تنحسب على سعر الإغلاق."] if target else [
         "ما فيه هدف ربح: كل عقد ينحسب من سعر أمر الشراء إلى سعر الإغلاق.",
-        f"ضرب الوقف = نزل {STOP_PCT}% من سعر الأمر، وتنحسب خسارة {STOP_PCT}%. الساعة الأخيرة بدون وقف.",
-        "ما تنفذ = السعر ما رجع لنطاق الشراء، فما ينحسب في الربح والخسارة."])
+        f"ضرب الوقف = نزل {STOP_PCT}% من سعر الأمر، وتنحسب خسارة {STOP_PCT}%. الساعة الأخيرة بدون وقف."])
     return finish(img, footer(d, y, when))
 
 
