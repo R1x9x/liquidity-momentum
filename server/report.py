@@ -150,8 +150,8 @@ def build_spx(recs, day):
         high, high_time, close = _after(b, after, r["order"])
         rows.append(dict(sym=r["sym"], side=r["side"], kind=r["kind"], strike=r["strike"], exp_label=r["exp_label"],
                          time=clock(ts), entry=r["order"], high=high, high_time=high_time, close=close,
-                         # بدون وقف: نسبة وقف فوق 100% ما تنضرب أبداً
-                         result=outcome(b, after, r["order"], cards.WIN_PCT, cards.STOP_PCT if r["stop"] else 101)))
+                         # ما فيه هدف ربح في SPX، وبدون وقف: نسب خارج المدى ما تنضرب أبداً
+                         result=outcome(b, after, r["order"], 10 ** 9, cards.STOP_PCT if r["stop"] else 101)))
     return rows, missed
 
 

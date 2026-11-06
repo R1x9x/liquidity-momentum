@@ -146,7 +146,7 @@ def send_reports(day):
     ok = send_photo(cards.contract_report(crow, label, when), f"📊 تقرير العقود | نهاية جلسة {label}")
     xrow, missed = report.build_spx(report.records(STATE_DIR, day), day)
     if xrow or missed:  # يطلع بس في الأيام اللي جا فيها تنبيه SPX
-        ok = send_photo(cards.contract_report(xrow, label, when, title="تقرير SPX"),
+        ok = send_photo(cards.contract_report(xrow, label, when, title="تقرير SPX", target=False),
                         f"📊 تقرير SPX | نهاية جلسة {label}\nأوامر تنفذت: {len(xrow)} | ما تنفذت: {missed}", SPX_BOT) and ok
     if srow:  # يطلع بس في الأيام اللي جت فيها إشارة SPY تجريبية
         ok = send_photo(cards.contract_report(srow, label, when, title="تقرير SPY التجريبي"),
