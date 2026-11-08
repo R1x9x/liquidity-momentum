@@ -1,6 +1,6 @@
 """
 خدمة تنبيهات رادار السيولة — تفحص الأسهم كل دقيقة وقت السوق وترسل تنبيهات تلقرام بالصور.
-الأسهم الكبيرة (سعرها 60$ إلى 1500$): تنبيه فقط إذا النقاط وصلت الحد وفيه عقد مطابق للشروط. الأسهم الصغيرة: صعود 7+ فقط.
+الأسهم الكبيرة (سعرها 60$ إلى 1500$): تنبيه كل ما وصلت النقاط الحد وفيه عقد جديد مطابق، وبين كل تنبيهين لنفس السهم والاتجاه 30 دقيقة. الأسهم الصغيرة: صعود 7+ فقط.
 """
 import os
 import sys
@@ -30,6 +30,7 @@ PENNY_MIN = int(os.environ.get("PENNY_MIN_SCORE", "7"))  # الأسهم الصغ
 PENNY_ALERTS = os.environ.get("PENNY_ALERTS_ON", "0") == "1"
 SPY_ALERTS = os.environ.get("SPY_ALERTS", "1") == "1"  # إشارة SPY التجريبية (زخم + حجم + اتساع السوق)
 SPX_ALERTS = os.environ.get("SPX_ALERTS", "1") == "1"  # عقود مؤشر SPX
+BIG_GAP = int(os.environ.get("BIG_GAP_MIN", "30"))  # دقائق بين تنبيهين لنفس السهم ونفس الاتجاه (كل تنبيه بعقد جديد)
 STATE_DIR = os.environ.get("STATE_DIR", "/opt/radar/state")
 os.makedirs(STATE_DIR, exist_ok=True)
 
@@ -202,6 +203,12 @@ def rev_warning(spy, side):
     return f"احتمال ارتداد السوق بعد {'صعوده' if side == 'up' else 'نزوله'}", spy["rev"]["reasons"]
 
 
+def big_history(day, sent):
+    """تنبيهات عقود الشركات اليوم: (السهم، الاتجاه، الوقت، العقد). من سجل التقرير ومن sent احتياط."""
+    hist = [(r["sym"], r["side"], r["ts"], r.get("option", "")) for r in report.load(STATE_DIR, day) if r["list"] == "big"]
+    return hist + [tuple(k.split("|")[1:]) for k in sent if k.startswith("BIG|")]
+
+
 def alert_big(tickers, sent, day):
     data = rc.load_alpaca(tickers + [rc.MARKET])
     results, mkt = rc.scan(data, tickers)
@@ -210,22 +217,28 @@ def alert_big(tickers, sent, day):
     except Exception as e:
         log("spy state error", e)
         spy = None
+    now = dt.datetime.now(NY)
+    hist = big_history(day, sent)
+    gap = dt.timedelta(minutes=BIG_GAP)
     for r in results:
-        key = f"{r['sym']}:{r['side']}"
         # SPY له إشارة خاصة (alert_spy)، النقاط العشر ما تناسبه
-        if r["sym"] == rc.MARKET or r["score"] < ALERT_MIN or key in sent or not rc.big_price_ok(r):
+        if r["sym"] == rc.MARKET or r["score"] < ALERT_MIN or not rc.big_price_ok(r):
             continue
+        mine = [h for h in hist if h[0] == r["sym"] and h[1] == r["side"]]
+        if any(now - dt.datetime.fromisoformat(t) < gap for _, _, t, _ in mine):
+            continue  # فاصل بين تنبيهين لنفس السهم ونفس الاتجاه
         try:
             r["zone"] = rc.stock_zone(r["sym"], r["side"], data["intr"].get(r["sym"]), data["daily"].get(r["sym"]))
         except Exception as e:
-            log("zone error", key, e)
+            log("zone error", r["sym"], r["side"], e)
             continue
         if not r["zone"]:
             continue  # بدون تأكيد من مناطق السيولة ما فيه تنبيه (ونرجع نشيك الدقيقة الجاية)
         kind = "call" if r["side"] == "up" else "put"
-        opt, why = rc.best_option(r["sym"], kind, r["price"])
+        opt, why = rc.best_option(r["sym"], kind, r["price"], skip={o for _, _, _, o in mine})
         if not opt:
-            continue  # بدون عقد مطابق ما فيه تنبيه (ونرجع نشيك الدقيقة الجاية)
+            continue  # بدون عقد جديد مطابق ما فيه تنبيه (ونرجع نشيك الدقيقة الجاية)
+        key = f"BIG|{r['sym']}|{r['side']}|{now.isoformat()}|{opt['symbol']}"
         zone_text = rc.ZONE_TEXT[(r["side"], r["zone"])]
         caption = (f"{'🟢 صعود' if kind == 'call' else '🔴 هبوط'} | {r['sym']} | "
                    f"{kind.upper()} ${opt['strike']:g} | {opt['exp_label']}\n{zone_text}")

@@ -835,9 +835,12 @@ def option_candidates(sym, kind, price, rules=OPT_RULES, now=None):
     return [], "no_match"
 
 
-def best_option(sym, kind, price, rules=OPT_RULES, now=None):
-    """أفضل عقد حسب شروطنا. يرجع (العقد، السبب): ok / error / no_exp / no_match"""
+def best_option(sym, kind, price, rules=OPT_RULES, now=None, skip=()):
+    """أفضل عقد حسب شروطنا، غير العقود اللي في skip. يرجع (العقد، السبب): ok / error / no_exp / no_match"""
     found, why = option_candidates(sym, kind, price, rules, now)
+    if found and skip:
+        found = [o for o in found if o["symbol"] not in skip]
+        why = why if found else "no_match"
     return (found[0], "ok") if found else (None, why)
 
 
