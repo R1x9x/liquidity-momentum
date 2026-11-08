@@ -597,15 +597,15 @@ def spy_state(data, tickers, rules=SPY_RULES, rev_rules=REV_RULES):
 # ---------------- SPX: تنبيه خاص بعقود المؤشر ----------------
 # مختبرة على 82 جلسة (نوفمبر 2026) بأسعار عقود SPX الحقيقية: 8 نقاط على شارت SPY بدون شرطي السوق.
 # أمر الشراء تحت سعر التنبيه: أعلى النطاق هو سعر الأمر (مختبر)، وأسفله 5% أقل منه
-SPX_RULES = dict(sym="SPX", min_score=5, start=(9, 40), main_end=(15, 0), late_end=(15, 45), cancel_by=(15, 50),
+SPX_RULES = dict(sym="SPX", min_score=5, start=(9, 40), main_end=(15, 0), late_end=(15, 59), cancel_by=(16, 0),
                  wait=30, gap=30, min_vol=100, stale=300, span=0.025,
                  main=dict(budget=(400, 1500), order=(0.15, 0.20), stop=True),
-                 late=dict(budget=(200, 350), order=(0.10, 0.15), stop=False))
+                 late=dict(budget=(10, 300), order=(0.10, 0.15), stop=False))
 SPX_DROP = {"أقوى من السوق", "أضعف من السوق", "السوق داعم", "السوق ضاغط"}
 
 
 def spx_slot(now, rules=SPX_RULES):
-    """الفترة الحالية: main من 9:40 إلى 15:00، و late بعدها إلى 15:45 نيويورك، وإلا None."""
+    """الفترة الحالية: main من 9:40 إلى 15:00، و late بعدها لين الإغلاق 16:00 نيويورك، وإلا None."""
     t = (now.hour, now.minute)
     if rules["start"] <= t <= rules["main_end"]:
         return "main"
